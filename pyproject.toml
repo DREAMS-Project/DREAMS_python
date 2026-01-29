@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+    "dreams_python"
+]
+
+[project]
+name = "dreams_python"
+version = "0.1.0"
+description = "DREAMS Python tools"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Alex Garcia", email = "alexgarcia@virginia.edu" }
+]
+dependencies = [
+    "h5py",
+    "numpy",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/DREAMS-Project/DREAMS_python"
+"Documentation" = "https://dreams-project.readthedocs.io/en/latest/"

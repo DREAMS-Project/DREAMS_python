@@ -235,7 +235,7 @@ class DREAMS:
         return ids[winner]
 
     def get_sublink_mpb(self, run, snap, subhalo_idx=-1, DMO=False):
-        sublink_tree = self.read_sublink_cat(run, DMO=DMO)    
+        sublink_tree = self.read_sublink_cat(run, DMO=DMO)
         
         if subhalo_idx > -1:
             mask = ( (sublink_tree['SnapNum'] == snap) & (sublink_tree['SubhaloID'] == subhalo_idx) )

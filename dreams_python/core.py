@@ -2,20 +2,62 @@ import h5py
 import sys, os
 import numpy as np
 
+from pathlib import Path
+
 class DREAMS:
-    def __init__( self, base_path, suite='varied_mass', DM_type='CDM', sobol_number=6, box_or_run='box', verbose=False ):
+    def __init__( self, base_path, suite='varied_mass', DM_type='CDM', sobol_number=6,
+                  box_or_run='box', verbose=False,
+                  layout=None ):
         self.base_path    = base_path
         self.box_or_run   = box_or_run
         self.dm_type      = DM_type
         self.suite        = suite
         self.sobol_number = sobol_number
         self._verbose     = verbose
-    
-        self.dir     = lambda file_type: f'{base_path}/{file_type}/{DM_type}/{suite}/SB{sobol_number}'
-        self.dir_dmo = lambda file_type: f'{base_path}/{file_type}/{DM_type}/{suite}/SB{sobol_number}_Nbody'
+
+        self.layout = layout or { ## default paths
+            "FOF_Subfind": "{base}/FOF_Subfind/{dm}/{suite}/SB{sb}/run_{run}/fof_subhalo_tab_{snap}.hdf5",
+            "SubLink":     "{base}/FOF_Subfind/{dm}/{suite}/SB{sb}/run_{run}/tree_extended.hdf5",
+            "Sims":        "{base}/Sims/{dm}/{suite}/SB{sb}/run_{run}/snap_{snap}.hdf5",
+            "Rockstar":    "{base}/Rockstar/{dm}/{suite}/SB{sb}/run_{run}/out_{snap}.list",
+            "Parameters":  "{base}/Parameters/{dm}/{suite}",
+        }
 
         if self._verbose:
             print(f'Working with {DM_type} {suite} SB{sobol_number}')
+
+    def resolve_dir(self, file_type, run, snap, DMO=False):
+        sb = f"{self.sobol_number}_Nbody" if DMO else self.sobol_number ## default behavior
+
+        this_key_count = 0
+        layout_keys = self.layout.keys() 
+        for key in layout_keys:
+            if file_type in key:
+                this_key_count += 1
+        
+        if DMO and this_key_count == 2:
+            file_type = file_type + "_Nbody"
+
+        
+        
+        template = self.layout[file_type]
+        path = template.format(
+            base=self.base_path,
+            dm=self.dm_type,
+            suite=self.suite,
+            sb=f"{sb}",
+            run=f"{run}",
+            snap=f"{snap:03d}" if "Rockstar" not in file_type else f"{snap}",
+            fname=run ## kinda hacky
+        )
+        return Path(path)
+
+    def set_path(self, file_type, template):
+        """
+        Example:
+        dreams.set_path("Sims", "/scratch/{dm}/{suite}/SB{sb}")
+        """
+        self.layout[file_type] = template
     
     def check_path(self, path, type_file, run, snap=-1):
         if not os.path.exists(path):
@@ -27,11 +69,7 @@ class DREAMS:
                 raise(FileNotFoundError(f'{type_file} for {self.box_or_run} {run} does not exist'))
     
     def read_group_catalog(self, run, snap, keys=[], DMO=False):
-        path_func = self.dir
-        if DMO:
-            path_func = self.dir_dmo
-            
-        path = f"{path_func('FOF_Subfind')}/{self.box_or_run}_{run}/fof_subhalo_tab_{snap:03d}.hdf5"
+        path = self.resolve_dir("FOF_Subfind", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"fof_subhalo_tab_{snap:03d}.hdf5"
         self.check_path(path, 'Group Catalog', run, snap)
         
         cat = dict()
@@ -71,11 +109,7 @@ class DREAMS:
                         tmp_keys.append( f'PartType{pt}/{key}' )
             keys = tmp_keys
 
-        path_func = self.dir
-        if DMO:
-            path_func = self.dir_dmo
-        
-        path = f"{path_func('Sims')}/{self.box_or_run}_{run}/snap_{snap:03d}.hdf5"
+        path = self.resolve_dir("Sims", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"snap_{snap:03d}.hdf5"
         self.check_path(path, 'Snapshot', run, snap)
 
         cat = dict()
@@ -104,8 +138,24 @@ class DREAMS:
                         continue
         return cat
 
+    def read_rockstar(self, run, snap, keys=[], DMO=False):
+        path = self.resolve_dir("Rockstar", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"out_{snap}.list"
+        self.check_path(path, 'Rockstar Catalog', run, snap)
+
+        output = dict()
+        with open(path, 'r') as f:
+            data   = np.genfromtxt(f, names=True)
+            if len(keys) == 0:
+                keys = data.dtype.names
+            for key in keys:
+                if key not in data.dtype.names:
+                    raise KeyError(f'{key} not in Rockstar Catalogs')
+                output[key] = np.array(data[key])
+        
+        return output
+    
     def read_param_file(self, fname):
-        path = f'{self.base_path}/Parameters/{self.dm_type}/{self.suite}/{fname}'
+        path = self.resolve_dir("Parameters", fname, -1, False)# / f"{self.box_or_run}_{run}" / fname
         data = np.loadtxt(path)
         header = None
         with open(path, 'r') as f:
@@ -113,11 +163,7 @@ class DREAMS:
         return data, header.split()
 
     def read_sublink_cat(self, run, keys=[], DMO=False):
-        path_func = self.dir
-        if DMO:
-            path_func = self.dir_dmo
-            
-        path = f"{path_func('FOF_Subfind')}/{self.box_or_run}_{run}/tree_extended.hdf5"
+        path = self.resolve_dir("SubLink", run, 90, DMO)# / f"{self.box_or_run}_{run}" / f"tree_extended.hdf5"
         self.check_path(path, 'Sublink Catalog', run)
         
         cat = dict()
@@ -128,18 +174,20 @@ class DREAMS:
                 cat[key] = np.array(ofile[key])
         return cat
     
-    def get_scf(self, run, snap): ## should be same dmo and hydro
+    def get_scf(self, run, snap):
         scf = None
-        path = f"{self.dir('Sims')}/{self.box_or_run}_{run}/snap_{snap:03d}.hdf5"
+        DMO = False ## should be same dmo and hydro
+        path = self.resolve_dir("Sims", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"snap_{snap:03d}.hdf5"
         self.check_path(path, 'Snapshot', run, snap)
         
         with h5py.File(path, 'r') as f:
             scf=f['Header'].attrs['Time']
         return scf
 
-    def get_h(self, run, snap): ## should be same dmo and hydro
+    def get_h(self, run, snap): 
         h = None
-        path = f"{self.dir('Sims')}/{self.box_or_run}_{run}/snap_{snap:03d}.hdf5"
+        DMO = False ## should be same dmo and hydro
+        path = self.resolve_dir("Sims", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"snap_{snap:03d}.hdf5"
         self.check_path(path, 'Snapshot', run, snap)
         
         with h5py.File(path, 'r') as f:
@@ -148,7 +196,8 @@ class DREAMS:
 
     def get_box_size(self, run, snap): ## should be same dmo and hydro
         box_size = None
-        path = f"{self.dir('Sims')}/{self.box_or_run}_{run}/snap_{snap:03d}.hdf5"
+        DMO = False ## should be same dmo and hydro
+        path = self.resolve_dir("Sims", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"snap_{snap:03d}.hdf5"
         self.check_path(path, 'Snapshot', run, snap)
         
         with h5py.File(path, 'r') as f:
@@ -156,12 +205,8 @@ class DREAMS:
         return box_size
 
     def get_header(self, run, snap, DMO=False):
-        path_func = self.dir
-        if DMO:
-            path_func = self.dir_dmo
-        
         attrs = {}
-        path = f"{path_func('Sims')}/{self.box_or_run}_{run}/snap_{snap:03d}.hdf5"
+        path = self.resolve_dir("Sims", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"snap_{snap:03d}.hdf5"
         self.check_path(path, 'Snapshot', run, snap)
 
         with h5py.File(path, 'r') as f:
@@ -234,6 +279,37 @@ class DREAMS:
             print('')
         return ids[winner]
 
+    def get_target_rockstar_index(self, run, snap, target_mass, max_dm=0.25, DMO=False,
+                                  _rockstar_units=1e3):
+        rockstar_cat = self.read_rockstar(run, snap)
+        
+        ## get close matches in halo mass
+        ids = rockstar_cat['ID'].astype(int)
+        targets = np.abs(np.log10(rockstar_cat['Mvir']) - target_mass)
+        potential = targets < max_dm
+        
+        if self._verbose:
+            print(f'Found {sum(potential)} targets within {max_dm} dex')
+
+        if sum(potential) == 0:
+            print(f'0 targets within {max_dm} dex of {target_mass}')
+            return -1
+
+        grp_cat = self.read_group_catalog(run, snap, keys=['GroupPos'], DMO=DMO) ## load FoF to verify
+        if DMO:
+            _, fof_idx = self.match_halo_hydro_dmo(run, snap, target_mass)
+        else:
+            fof_idx = self.get_target_fof_index(run, snap, target_mass) 
+        fof_pos = grp_cat['GroupPos'][fof_idx]
+        
+        ## compare position to FoF
+        ids = ids[potential]
+        x, y, z = rockstar_cat['X'][potential], rockstar_cat['Y'][potential], rockstar_cat['Z'][potential]
+    
+        rs_pos = np.vstack([x, y, z]).T * _rockstar_units ## Assuming rockstar in Mpc
+        
+        return ids[np.argmin(np.linalg.norm(fof_pos - rs_pos, axis=1))]
+    
     def get_sublink_mpb(self, run, snap, subhalo_idx=-1, DMO=False):
         sublink_tree = self.read_sublink_cat(run, DMO=DMO)
         
@@ -427,8 +503,7 @@ class DREAMS:
         if DMO and any(pt in [0, 4, 5] for pt in part_types):
             raise KeyError("Cannot load baryons in DMO simulation")
     
-        path_func = self.dir if not DMO else self.dir_dmo
-        path = f"{path_func('Sims')}/{self.box_or_run}_{run}/snap_{snap:03d}.hdf5"
+        path = self.resolve_dir("Sims", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"snap_{snap:03d}.hdf5"
         self.check_path(path, 'Snapshot', run, snap)
     
         grp_cat = self.read_group_catalog(run, snap, keys=['SubhaloLenType'], DMO=DMO)
@@ -539,10 +614,42 @@ class DREAMS:
     def load_consistent_trees():
         print('TODO')
         return
-
-    def load_rockstar():
-        print('TODO')
-        return
         
 if __name__ == "__main__":
     print('Hello World!')
+
+    # rvs = DREAMS(base_path='/project/torrey-group/agarcia/DREAMS_Varied_Resolution/')#,
+    #              #suite='varied_mass',DM_type='CDM',sobol_number=9, box_or_run='run')
+
+    # DMO = True
+
+    # rvs.set_path("Parameters","/standard/DREAMS/Parameters/{dm}/{suite}/{fname}")
+    
+    # rvs.set_path("Sims","{base}/run_{run}/zoom/RUNs/output/snap_{snap}.hdf5")
+    # rvs.set_path("FOF_Subfind","{base}/run_{run}/zoom/RUNs/output/fof_subhalo_tab_{snap}.hdf5")
+    # rvs.set_path("SubLink","{base}/run_{run}/zoom/trees/SubLink/tree_extended.hdf5")
+    # rvs.set_path("Rockstar","{base}/run_{run}/zoom/RUNs/Rockstar/out_{snap}.list")
+
+    # rvs.set_path("Sims_Nbody","{base}/run_{run}/dmo_zoom3/RUNs/output/snap_{snap}.hdf5")
+    # rvs.set_path("FOF_Subfind_Nbody","{base}/run_{run}/dmo_zoom3/RUNs/output/fof_subhalo_tab_{snap}.hdf5")
+    # rvs.set_path("Rockstar_Nbody","{base}/run_{run}/dmo_zoom3/RUNs/Rockstar/out_{snap}.list")
+    # rvs.set_path("SubLink_Nbody","{base}/run_{run}/dmo_zoom3/trees/SubLink/tree_extended.hdf5")
+    
+    # run = 39
+    # snap = 90
+
+    # grp_cat = rvs.read_group_catalog(run, snap, DMO=DMO)
+    # prt_cat = rvs.read_snapshot(run, snap, DMO=DMO)
+    # sublink = rvs.read_sublink_cat(run, DMO=DMO)
+    # rockstar = rvs.read_rockstar(run, snap, DMO=DMO)
+
+    # h = rvs.get_h(run, snap)
+    # scf = rvs.get_scf(run, snap)
+    # box_size = rvs.get_box_size(run, snap)
+    # hdr = rvs.get_header(run, snap)
+
+    # params, header = rvs.read_param_file('TNG_SB9.txt')
+    # target_masses = params[:, 0]
+    
+    # hydro, dmo = rvs.match_halo_hydro_dmo(run, snap, target_masses[run])
+    # print(hydro, dmo)

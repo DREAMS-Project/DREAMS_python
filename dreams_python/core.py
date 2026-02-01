@@ -20,12 +20,32 @@ class DREAMS:
             "SubLink":     "{base}/FOF_Subfind/{dm}/{suite}/SB{sb}/run_{run}/tree_extended.hdf5",
             "Sims":        "{base}/Sims/{dm}/{suite}/SB{sb}/run_{run}/snap_{snap}.hdf5",
             "Rockstar":    "{base}/Rockstar/{dm}/{suite}/SB{sb}/run_{run}/out_{snap}.list",
-            "Parameters":  "{base}/Parameters/{dm}/{suite}",
+            "Parameters":  "{base}/Parameters/{dm}/{suite}/{fname}",
+
+            "ConsistentTrees": "{base}/Rockstar/{dm}/{suite}/SB{sb}/run_{run}/tree_0_0_0.dat",
         }
 
         if self._verbose:
             print(f'Working with {DM_type} {suite} SB{sobol_number}')
 
+        self.CT_COLUMNS = [
+            'scale','id','desc_scale','desc_id','num_prog','pid','upid','desc_pid',
+            'phantom','sam_Mvir','Mvir','Rvir','rs','vrms','mmp',
+            'scale_of_last_MM','vmax','x','y','z','vx','vy','vz',
+            'Jx','Jy','Jz','Spin','Breadth_first_ID','Depth_first_ID',
+            'Tree_root_ID','Orig_halo_ID','Snap_idx',
+            'Next_coprogenitor_depthfirst_ID',
+            'Last_progenitor_depthfirst_ID',
+            'Last_mainleaf_depthfirst_ID',
+            'Tidal_Force','Tidal_ID','Rs_Klypin',
+            'Mvir_all','M200b','M200c','M500c','M2500c',
+            'Xoff','Voff','Spin_Bullock',
+            'b_to_a','c_to_a','Ax','Ay','Az',
+            'b_to_a500c','c_to_a500c','Ax500c','Ay500c','Az500c',
+            'TU','M_pe_Behroozi','M_pe_Diemer',
+            'Type','SM','Gas','BH_Mass'
+        ]
+    
     def resolve_dir(self, file_type, run, snap, DMO=False):
         sb = f"{self.sobol_number}_Nbody" if DMO else self.sobol_number ## default behavior
 
@@ -38,8 +58,6 @@ class DREAMS:
         if DMO and this_key_count == 2:
             file_type = file_type + "_Nbody"
 
-        
-        
         template = self.layout[file_type]
         path = template.format(
             base=self.base_path,
@@ -163,7 +181,7 @@ class DREAMS:
         return data, header.split()
 
     def read_sublink_cat(self, run, keys=[], DMO=False):
-        path = self.resolve_dir("SubLink", run, 90, DMO)# / f"{self.box_or_run}_{run}" / f"tree_extended.hdf5"
+        path = self.resolve_dir("SubLink", run, -1, DMO)
         self.check_path(path, 'Sublink Catalog', run)
         
         cat = dict()
@@ -173,7 +191,33 @@ class DREAMS:
             for key in keys:
                 cat[key] = np.array(ofile[key])
         return cat
+
+    def read_consistent_trees(self, run, keys=[], DMO=False):
+        path = self.resolve_dir("ConsistentTrees", run, -1, DMO)
+        self.check_path(path, 'Consistent Trees Catalog', run)
+
+        lines = []
+        with open(path, 'r') as f:
+            for line in f:
+                if line.startswith('#'):
+                    continue
+                if len(line.split()) == len(self.CT_COLUMNS):
+                    lines.append(line)
     
+        data = np.fromstring(
+            ''.join(lines),
+            sep=' '
+        ).reshape(-1, len(self.CT_COLUMNS))
+    
+        structured = np.zeros(len(data), dtype=[(c, 'f8') for c in self.CT_COLUMNS])
+        for i, c in enumerate(self.CT_COLUMNS):
+            structured[c] = data[:, i]
+    
+        if len(keys) == 0:
+            keys = self.CT_COLUMNS
+    
+        return {key: structured[key] for key in keys}
+        
     def get_scf(self, run, snap):
         scf = None
         DMO = False ## should be same dmo and hydro
@@ -307,8 +351,10 @@ class DREAMS:
         x, y, z = rockstar_cat['X'][potential], rockstar_cat['Y'][potential], rockstar_cat['Z'][potential]
     
         rs_pos = np.vstack([x, y, z]).T * _rockstar_units ## Assuming rockstar in Mpc
+
+        rockstar_id = ids[np.argmin(np.linalg.norm(fof_pos - rs_pos, axis=1))]
         
-        return ids[np.argmin(np.linalg.norm(fof_pos - rs_pos, axis=1))]
+        return np.where(rockstar_cat["ID"] == rockstar_id)[0][0]
     
     def get_sublink_mpb(self, run, snap, subhalo_idx=-1, DMO=False):
         sublink_tree = self.read_sublink_cat(run, DMO=DMO)
@@ -321,7 +367,7 @@ class DREAMS:
                 return {}
             target = match[0]
         else:
-            raise KeyError(f'Please pass either fof_idx or subhalo_idx')
+            raise KeyError(f'Please pass subhalo_idx')
 
         cat = dict()
         for key in sublink_tree.keys(): ## add target info
@@ -338,6 +384,47 @@ class DREAMS:
         }
             
         return cat
+
+    def get_consistent_trees_mpb(self, run, snap, subhalo_idx=-1, DMO=False):
+        if subhalo_idx == -1:
+            raise KeyError(f'Please pass subhalo_idx')
+        
+        rockstar_cat = self.read_rockstar(run, snap, DMO=DMO)
+        Mvir_rs = rockstar_cat['Mvir'][subhalo_idx]
+        
+        ct = self.read_consistent_trees(run, DMO=DMO)
+
+        ## Find where target lives in Consistent Tree catalog
+        scf        = self.get_scf(run, snap)
+        this_snap  = int(ct['Snap_idx'][np.isclose(ct['scale'], scf)][0])
+        ids        = np.arange(len(ct['Snap_idx'])).astype(int)
+        snap_mask  = (ct["Snap_idx"] == this_snap)    
+        mass_match = np.argmin(np.abs( np.log10(ct['Mvir'][snap_mask]) - np.log10(Mvir_rs) ))
+        ct_id      = ids[snap_mask][mass_match]
+
+        ## Walk the main progenitor branch
+        branch = []
+        
+        root_id = ct['id'][ct_id]
+        idx = np.where( ct['id'] == root_id )[0][0]
+        while True:
+            branch.append(idx)
+            progs = np.where(ct['desc_id'] == ct['id'][idx])[0]
+            if len(progs) == 0:
+                break
+            idx = progs[ np.argmax( ct['Mvir'][progs] ) ]
+
+        ## Create out structure
+        mpb = {}
+        for node in branch:
+            for key in ct.keys():
+                if key not in mpb:
+                    mpb[key] = [ct[key][node]]
+                else:
+                    mpb[key] += [ct[key][node]]
+        for key in mpb.keys():
+            mpb[key] = np.array( mpb[key] )
+        return mpb
 
     def get_sublink_tree(self, run, snap, subhalo_idx=-1, DMO=False):
         sublink_tree = self.read_sublink_cat(run, DMO=DMO)    
@@ -397,7 +484,59 @@ class DREAMS:
         }
         
         return cat
+
+    def get_consistent_tree(self, run, snap, subhalo_idx=-1, DMO=False):
+        if subhalo_idx == -1:
+            raise KeyError(f'Please pass subhalo_idx')
         
+        rockstar_cat = self.read_rockstar(run, snap, DMO=DMO)
+        Mvir_rs = rockstar_cat['Mvir'][subhalo_idx]
+        
+        ct = self.read_consistent_trees(run, DMO=DMO)
+
+        ## Find where target lives in Consistent Tree catalog
+        scf        = self.get_scf(run, snap)
+        this_snap  = int(ct['Snap_idx'][np.isclose(ct['scale'], scf)][0])
+        ids        = np.arange(len(ct['Snap_idx'])).astype(int)
+        snap_mask  = (ct["Snap_idx"] == this_snap)    
+        mass_match = np.argmin(np.abs( np.log10(ct['Mvir'][snap_mask]) - np.log10(Mvir_rs) ))
+        ct_id      = ids[snap_mask][mass_match]
+
+        def walk_tree(ID, visited, ct):
+            '''Recursively walk consistent tree'''
+            if not isinstance(ID, int):
+                ID = int(ID)
+            if ID in visited:
+                return
+        
+            visited.add(ID)
+        
+            progs = np.where(ct['desc_id'] == ct['id'][ID])[0]
+            assert( len(progs) == ct['num_prog'][ID] )
+            for p in progs:
+                walk_tree(p, visited, ct)
+
+        ## Walk the whole tree
+        root_id = ct['id'][ct_id]
+        idx = np.where( ct['id'] == root_id )[0][0]
+        
+        visited = set()
+        walk_tree(idx, visited, ct)
+
+        nodes = np.array(sorted(visited), dtype=int)
+        
+        tree = {}
+        for node in nodes:
+            for key in ct.keys():
+                if key not in tree:
+                    tree[key] = [ct[key][node]]
+                else:
+                    tree[key].append(ct[key][node])
+        for key in tree:
+            tree[key] = np.array(tree[key])
+    
+        return tree
+            
     def get_target_central_subhalo_index(self, run, snap, target_mass, max_dm=0.25, max_contam=0.25):
         h = self.get_h(run, snap)
         grp_cat = self.read_group_catalog(run, snap, keys=['GroupFirstSub'])
@@ -610,46 +749,6 @@ class DREAMS:
             print(f'Hydro-DMO Matching Best Score: {scores[np.argmax(scores)]*100:0.3f}% overlap')
         
         return fof_idx, ids[np.argmax(scores)]
-
-    def load_consistent_trees():
-        print('TODO')
-        return
         
 if __name__ == "__main__":
     print('Hello World!')
-
-    # rvs = DREAMS(base_path='/project/torrey-group/agarcia/DREAMS_Varied_Resolution/')#,
-    #              #suite='varied_mass',DM_type='CDM',sobol_number=9, box_or_run='run')
-
-    # DMO = True
-
-    # rvs.set_path("Parameters","/standard/DREAMS/Parameters/{dm}/{suite}/{fname}")
-    
-    # rvs.set_path("Sims","{base}/run_{run}/zoom/RUNs/output/snap_{snap}.hdf5")
-    # rvs.set_path("FOF_Subfind","{base}/run_{run}/zoom/RUNs/output/fof_subhalo_tab_{snap}.hdf5")
-    # rvs.set_path("SubLink","{base}/run_{run}/zoom/trees/SubLink/tree_extended.hdf5")
-    # rvs.set_path("Rockstar","{base}/run_{run}/zoom/RUNs/Rockstar/out_{snap}.list")
-
-    # rvs.set_path("Sims_Nbody","{base}/run_{run}/dmo_zoom3/RUNs/output/snap_{snap}.hdf5")
-    # rvs.set_path("FOF_Subfind_Nbody","{base}/run_{run}/dmo_zoom3/RUNs/output/fof_subhalo_tab_{snap}.hdf5")
-    # rvs.set_path("Rockstar_Nbody","{base}/run_{run}/dmo_zoom3/RUNs/Rockstar/out_{snap}.list")
-    # rvs.set_path("SubLink_Nbody","{base}/run_{run}/dmo_zoom3/trees/SubLink/tree_extended.hdf5")
-    
-    # run = 39
-    # snap = 90
-
-    # grp_cat = rvs.read_group_catalog(run, snap, DMO=DMO)
-    # prt_cat = rvs.read_snapshot(run, snap, DMO=DMO)
-    # sublink = rvs.read_sublink_cat(run, DMO=DMO)
-    # rockstar = rvs.read_rockstar(run, snap, DMO=DMO)
-
-    # h = rvs.get_h(run, snap)
-    # scf = rvs.get_scf(run, snap)
-    # box_size = rvs.get_box_size(run, snap)
-    # hdr = rvs.get_header(run, snap)
-
-    # params, header = rvs.read_param_file('TNG_SB9.txt')
-    # target_masses = params[:, 0]
-    
-    # hydro, dmo = rvs.match_halo_hydro_dmo(run, snap, target_masses[run])
-    # print(hydro, dmo)

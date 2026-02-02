@@ -44,12 +44,12 @@ class DREAMS:
         self._verbose     = verbose
 
         self.layout = layout or { ## default paths
-            "FOF_Subfind":     "{base}/FOF_Subfind/{dm}/{suite}/SB{sb}/run_{run}/fof_subhalo_tab_{snap}.hdf5",
-            "SubLink":         "{base}/FOF_Subfind/{dm}/{suite}/SB{sb}/run_{run}/tree_extended.hdf5",
-            "Sims":            "{base}/Sims/{dm}/{suite}/SB{sb}/run_{run}/snap_{snap}.hdf5",
-            "Rockstar":        "{base}/Rockstar/{dm}/{suite}/SB{sb}/run_{run}/out_{snap}.list",
+            "FOF_Subfind":     "{base}/FOF_Subfind/{dm}/{suite}/SB{sb}/{prefix}_{run}/fof_subhalo_tab_{snap}.hdf5",
+            "SubLink":         "{base}/FOF_Subfind/{dm}/{suite}/SB{sb}/{prefix}_{run}/tree_extended.hdf5",
+            "Sims":            "{base}/Sims/{dm}/{suite}/SB{sb}/{prefix}_{run}/snap_{snap}.hdf5",
+            "Rockstar":        "{base}/Rockstar/{dm}/{suite}/SB{sb}/{prefix}_{run}/out_{snap}.list",
             "Parameters":      "{base}/Parameters/{dm}/{suite}/{fname}",
-            "ConsistentTrees": "{base}/Rockstar/{dm}/{suite}/SB{sb}/run_{run}/tree_0_0_0.dat",
+            "ConsistentTrees": "{base}/Rockstar/{dm}/{suite}/SB{sb}/{prefix}_{run}/tree_0_0_0.dat",
         }
 
         if self._verbose:
@@ -88,6 +88,7 @@ class DREAMS:
                 ~ base: base path of simulations
                 ~ dm: dark matter type of simulations
                 ~ suite: which suite type
+                ~ prefix: box or run
                 ~ sb: sobol number
                 ~ run: simulation number
                 ~ snap: simulation snapshot
@@ -116,6 +117,7 @@ class DREAMS:
             base=self.base_path,
             dm=self.dm_type,
             suite=self.suite,
+            prefix=self.box_or_run,
             sb=f"{sb}",
             run=f"{run}",
             snap=f"{snap:03d}" if "Rockstar" not in file_type else f"{snap}",

@@ -1,13 +1,41 @@
+'''
+Read functions for most of the data products from the DREAMS simulation suites
+
+As of 02/02/2026, this has been tested and verifed to work (for the most part) on
+- MW_Zooms, WDM, SB4
+- MW_Zooms, CDM, SB5
+- varied_mass, CDM, SB6
+- varied_mass, CDM, SB9
+
+Written by Alex M. Garcia (alexgarcia@virginia.edu) with thanks to Jonah Rose and
+Ilem Leisher for providing some functions that have been adapted here.
+'''
 import h5py
 import sys, os
 import numpy as np
-
 from pathlib import Path
 
 class DREAMS:
     def __init__( self, base_path, suite='varied_mass', DM_type='CDM', sobol_number=6,
                   box_or_run='box', verbose=False,
                   layout=None ):
+        '''Read Function for the DREAMS Cosmological Simulations
+
+        Inputs:
+        - base_path: base_path location where the simulation data lives
+        - suite: which suite you're working with (e.g., "MW_Zooms", "varied_mass", "dwarfs")
+        - DM_type: which DM type your simulation is (e.g., "CDM", "WDM", "SIDM")
+        - sobol_number: how many parameters are varied
+        (Optional)
+        - box_or_run: specify whether your sims are named box or run
+        - verbose: print helpful comments along the way
+        - layout: helping in specifying the directory structure (see also self.set_path() )
+        
+        Example:
+        import dreams_python
+
+        mw_wdm = dreams_python.DREAMS( '/base/path/', suite='MW_Zooms', DM_type='WDM', sobol_number=4  )
+        '''
         self.base_path    = base_path
         self.box_or_run   = box_or_run
         self.dm_type      = DM_type
@@ -16,12 +44,11 @@ class DREAMS:
         self._verbose     = verbose
 
         self.layout = layout or { ## default paths
-            "FOF_Subfind": "{base}/FOF_Subfind/{dm}/{suite}/SB{sb}/run_{run}/fof_subhalo_tab_{snap}.hdf5",
-            "SubLink":     "{base}/FOF_Subfind/{dm}/{suite}/SB{sb}/run_{run}/tree_extended.hdf5",
-            "Sims":        "{base}/Sims/{dm}/{suite}/SB{sb}/run_{run}/snap_{snap}.hdf5",
-            "Rockstar":    "{base}/Rockstar/{dm}/{suite}/SB{sb}/run_{run}/out_{snap}.list",
-            "Parameters":  "{base}/Parameters/{dm}/{suite}/{fname}",
-
+            "FOF_Subfind":     "{base}/FOF_Subfind/{dm}/{suite}/SB{sb}/run_{run}/fof_subhalo_tab_{snap}.hdf5",
+            "SubLink":         "{base}/FOF_Subfind/{dm}/{suite}/SB{sb}/run_{run}/tree_extended.hdf5",
+            "Sims":            "{base}/Sims/{dm}/{suite}/SB{sb}/run_{run}/snap_{snap}.hdf5",
+            "Rockstar":        "{base}/Rockstar/{dm}/{suite}/SB{sb}/run_{run}/out_{snap}.list",
+            "Parameters":      "{base}/Parameters/{dm}/{suite}/{fname}",
             "ConsistentTrees": "{base}/Rockstar/{dm}/{suite}/SB{sb}/run_{run}/tree_0_0_0.dat",
         }
 
@@ -45,8 +72,34 @@ class DREAMS:
             'TU','M_pe_Behroozi','M_pe_Diemer',
             'Type','SM','Gas','BH_Mass'
         ]
+
+    #############
+    ##  Paths  ##
+    #############
+
+    def set_path(self, file_type, template):
+        '''
+        Set the layout for the simulation output directories
+
+        Inputs:
+        - file_type: any of ["Sims", "FOF_Subfind", "SubLink", "Rockstar", "Parameters", "ConsistentTrees"] and "*_Nbody" versions
+        - template: fake f-string formatting for where data lives
+            + acceptable key words:
+                ~ base: base path of simulations
+                ~ dm: dark matter type of simulations
+                ~ suite: which suite type
+                ~ sb: sobol number
+                ~ run: simulation number
+                ~ snap: simulation snapshot
+                ~ fname: name of file (used internally for Parameters file)
+        
+        Example:
+        dreams.set_path("Sims", "/scratch/{dm}/{suite}/SB{sb}")
+        '''
+        self.layout[file_type] = template
     
-    def resolve_dir(self, file_type, run, snap, DMO=False):
+    def _resolve_dir(self, file_type, run, snap, DMO=False):
+        '''Internal function used to get path'''
         sb = f"{self.sobol_number}_Nbody" if DMO else self.sobol_number ## default behavior
 
         this_key_count = 0
@@ -70,14 +123,8 @@ class DREAMS:
         )
         return Path(path)
 
-    def set_path(self, file_type, template):
-        """
-        Example:
-        dreams.set_path("Sims", "/scratch/{dm}/{suite}/SB{sb}")
-        """
-        self.layout[file_type] = template
-    
-    def check_path(self, path, type_file, run, snap=-1):
+    def _check_path(self, path, type_file, run, snap=-1):
+        '''Internal check of path existence'''
         if not os.path.exists(path):
             if self._verbose:
                 print(f'{path} does not exist')
@@ -85,10 +132,27 @@ class DREAMS:
                 raise(FileNotFoundError(f'{type_file} for {self.box_or_run} {run} at snap {snap} does not exist'))
             else:
                 raise(FileNotFoundError(f'{type_file} for {self.box_or_run} {run} does not exist'))
+
+    ######################
+    ##  Read Functions  ##
+    ######################
     
     def read_group_catalog(self, run, snap, keys=[], DMO=False):
-        path = self.resolve_dir("FOF_Subfind", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"fof_subhalo_tab_{snap:03d}.hdf5"
-        self.check_path(path, 'Group Catalog', run, snap)
+        ''' 
+        Read in Subfind group catalogs
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        (Optional)
+        - keys: keywords to load in
+        - DMO: toggle for Nbody versions
+
+        Returns:
+        - dict containing group catalog for specified simulation with specified keys
+        '''
+        path = self._resolve_dir("FOF_Subfind", run, snap, DMO)
+        self._check_path(path, 'Group Catalog', run, snap)
         
         cat = dict()
         with h5py.File(path) as ofile:
@@ -107,6 +171,20 @@ class DREAMS:
         return cat
     
     def read_snapshot(self, run, snap, part_types=[], keys=[], DMO=False):
+        ''' 
+        Read in arepo particle data
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        (Optional)
+        - part_types: particle types to load in (0->gas, 1->dm high res, 2->dm low res, 4->stars, 5->BHs)
+        - keys: keywords to load in
+        - DMO: toggle for Nbody versions
+
+        Returns:
+        - dict containing particle catalog for specified simulation with specified keys
+        '''
         if type(part_types) == type(0):
             part_types = [part_types]
         if len(part_types) == 0:
@@ -127,8 +205,8 @@ class DREAMS:
                         tmp_keys.append( f'PartType{pt}/{key}' )
             keys = tmp_keys
 
-        path = self.resolve_dir("Sims", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"snap_{snap:03d}.hdf5"
-        self.check_path(path, 'Snapshot', run, snap)
+        path = self._resolve_dir("Sims", run, snap, DMO)
+        self._check_path(path, 'Snapshot', run, snap)
 
         cat = dict()
         with h5py.File(path) as ofile:
@@ -157,8 +235,21 @@ class DREAMS:
         return cat
 
     def read_rockstar(self, run, snap, keys=[], DMO=False):
-        path = self.resolve_dir("Rockstar", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"out_{snap}.list"
-        self.check_path(path, 'Rockstar Catalog', run, snap)
+        ''' 
+        Read in Rockstar catalogs
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        (Optional)
+        - keys: keywords to load in
+        - DMO: toggle for Nbody versions
+
+        Returns:
+        - dict containing Rockstar catalog for specified simulation with specified keys
+        '''
+        path = self._resolve_dir("Rockstar", run, snap, DMO)
+        self._check_path(path, 'Rockstar Catalog', run, snap)
 
         output = dict()
         with open(path, 'r') as f:
@@ -173,7 +264,17 @@ class DREAMS:
         return output
     
     def read_param_file(self, fname):
-        path = self.resolve_dir("Parameters", fname, -1, False)# / f"{self.box_or_run}_{run}" / fname
+        ''' 
+        Read in DREAMS parameter file
+
+        Inputs:
+        - fname: name of file (relative, not absolute... see self.set_path() )
+
+        Returns:
+        - array containing parameters of simulation
+        - list containing header of parameters
+        '''
+        path = self._resolve_dir("Parameters", fname, -1, False)
         data = np.loadtxt(path)
         header = None
         with open(path, 'r') as f:
@@ -181,8 +282,21 @@ class DREAMS:
         return data, header.split()
 
     def read_sublink_cat(self, run, keys=[], DMO=False):
-        path = self.resolve_dir("SubLink", run, -1, DMO)
-        self.check_path(path, 'Sublink Catalog', run)
+        ''' 
+        Read in SubLink merger trees
+
+        Inputs:
+        - run: simulation number
+        (Optional)
+        - keys: keywords to load in
+        - DMO: toggle for Nbody versions
+
+        Returns:
+        - dict containing SubLink tree file for specified simulation with specified keys 
+            Note that this is the *entire* file, not a specific tree
+        '''
+        path = self._resolve_dir("SubLink", run, -1, DMO)
+        self._check_path(path, 'Sublink Catalog', run)
         
         cat = dict()
         with h5py.File(path, 'r') as ofile:
@@ -193,8 +307,21 @@ class DREAMS:
         return cat
 
     def read_consistent_trees(self, run, keys=[], DMO=False):
-        path = self.resolve_dir("ConsistentTrees", run, -1, DMO)
-        self.check_path(path, 'Consistent Trees Catalog', run)
+        ''' 
+        Read in Consistent Trees merger trees
+
+        Inputs:
+        - run: simulation number
+        (Optional)
+        - keys: keywords to load in
+        - DMO: toggle for Nbody versions
+
+        Returns:
+        - dict containing Consistent Trees file for specified simulation with specified keys 
+            Note that this is the *entire* file, not a specific tree
+        '''
+        path = self._resolve_dir("ConsistentTrees", run, -1, DMO)
+        self._check_path(path, 'Consistent Trees Catalog', run)
 
         lines = []
         with open(path, 'r') as f:
@@ -217,53 +344,86 @@ class DREAMS:
             keys = self.CT_COLUMNS
     
         return {key: structured[key] for key in keys}
-        
-    def get_scf(self, run, snap):
-        scf = None
-        DMO = False ## should be same dmo and hydro
-        path = self.resolve_dir("Sims", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"snap_{snap:03d}.hdf5"
-        self.check_path(path, 'Snapshot', run, snap)
-        
-        with h5py.File(path, 'r') as f:
-            scf=f['Header'].attrs['Time']
-        return scf
 
-    def get_h(self, run, snap): 
-        h = None
-        DMO = False ## should be same dmo and hydro
-        path = self.resolve_dir("Sims", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"snap_{snap:03d}.hdf5"
-        self.check_path(path, 'Snapshot', run, snap)
-        
-        with h5py.File(path, 'r') as f:
-            h = f['Header'].attrs['HubbleParam']
-        return h
+    def read_header(self, run, snap, DMO=False):
+        ''' 
+        Read in header from arepo snapshot files
 
-    def get_box_size(self, run, snap): ## should be same dmo and hydro
-        box_size = None
-        DMO = False ## should be same dmo and hydro
-        path = self.resolve_dir("Sims", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"snap_{snap:03d}.hdf5"
-        self.check_path(path, 'Snapshot', run, snap)
-        
-        with h5py.File(path, 'r') as f:
-            box_size=f['Header'].attrs['BoxSize']
-        return box_size
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        (Optional)
+        - DMO: toggle for Nbody versions
 
-    def get_header(self, run, snap, DMO=False):
+        Returns:
+        - dict containing all header attributes 
+        '''
         attrs = {}
-        path = self.resolve_dir("Sims", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"snap_{snap:03d}.hdf5"
-        self.check_path(path, 'Snapshot', run, snap)
+        path = self._resolve_dir("Sims", run, snap, DMO)
+        self._check_path(path, 'Snapshot', run, snap)
 
         with h5py.File(path, 'r') as f:
             hdr = f['Header']
             for key in hdr.attrs:
                 attrs[key] = hdr.attrs[key]
         return attrs
+    
+    ########################
+    ##  Header Shortcuts  ##
+    ########################
+        
+    def get_scf(self, run, snap):
+        '''Get scale factor at specified simulation snapshot'''
+        scf = None
+        DMO = False ## should be same dmo and hydro
+        path = self._resolve_dir("Sims", run, snap, DMO)
+        self._check_path(path, 'Snapshot', run, snap)
+        
+        with h5py.File(path, 'r') as f:
+            scf=f['Header'].attrs['Time']
+        return scf
 
+    def get_h(self, run, snap): 
+        '''Get hubble factor at specified simulation snapshot'''
+        h = None
+        DMO = False ## should be same dmo and hydro
+        path = self._resolve_dir("Sims", run, snap, DMO)
+        self._check_path(path, 'Snapshot', run, snap)
+        
+        with h5py.File(path, 'r') as f:
+            h = f['Header'].attrs['HubbleParam']
+        return h
+
+    def get_box_size(self, run, snap):
+        '''Get box size at specified simulation snapshot'''
+        box_size = None
+        DMO = False ## should be same dmo and hydro
+        path = self._resolve_dir("Sims", run, snap, DMO)
+        self._check_path(path, 'Snapshot', run, snap)
+        
+        with h5py.File(path, 'r') as f:
+            box_size=f['Header'].attrs['BoxSize']
+        return box_size
+    
     def get_high_res_dm_mass(self, run, snap):
+        '''Get high res dm mass resolution at specified simulation snapshot'''
         hdr = self.get_header(run, snap)
         return hdr['MassTable'][1]
+
+    #####################
+    ##  Contamination  ##
+    #####################
     
     def get_contamination_dm(self, group_catalog):
+        '''
+        Get dark matter contamination fraction for all halos in group catalog
+
+        Inputs:
+        - group_catalog: Subfind catalog (must contain at least "GroupMassType")
+
+        Returns:
+        - array of contamination fractions
+        '''
         keys = group_catalog.keys()
         try:
             assert("GroupMassType" in keys)
@@ -272,8 +432,59 @@ class DREAMS:
 
         masses = group_catalog['GroupMassType']
         return masses[:, 2] / np.sum(masses, axis=1)
+
+    def get_contamination_baryon(self, run, snap, fof_idx=-1, subhalo_idx=-1):
+        '''
+        Get gas contamination fraction for specific halo/subhalo
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        (Optional)
+        - fof_idx: index of halo to target 
+        - subhalo_idx: index of subhalo to target (unused if fof_idx used)
+
+        Returns:
+        - float of contamination fraction
+        '''
+        if fof_idx > -1 and subhalo_idx > -1:
+            raise ValueError('Please specify only fof_idx or subhalo_idx, not both')
+            
+        part_types = [0, 4]
+        keys = ['PartType0/AllowRefinement',
+                'PartType4/Masses']
+
+        if fof_idx > -1:
+            prt_cat = self.load_single_halo(run, snap, fof_idx, part_types, keys)
+        elif subhalo_idx > -1:
+            prt_cat = self.load_single_subhalo(run, snap, sub_idx, part_types, keys)
+
+        refined = prt_cat['PartType0/AllowRefinement']
+        low_res_gas = refined == 0
+
+        gas_contam = sum(low_res_gas) / len(refined)
+        return gas_contam
+
+    ###################################
+    ##  Identify Target of Interest  ##
+    ###################################
         
     def get_target_fof_index(self, run, snap, target_mass, max_dm=0.25, max_contam=0.25, DMO=False):
+        '''
+        Target a specific mass halo with specific contamination based on the Subfind catalogs
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        - target_mass: (log) mass of halo of interest
+        (Optional)
+        - max_dm: max tolerance in delta mass 
+        - max_contam: max tolerance in contamination
+        - DMO: toggle for Nbody versions (note that this is not guarenteed to give you the same halo as the hydro version)
+
+        Returns:
+        - integer of fof index corresponding to your target
+        '''
         if DMO:
             print('!!! Warning !!! Selecing a DMO simulation will work, but it is not guarenteed to be the correct halo')
             print('!!! Warning !!! It is recommended you use "match_halo_hydro_dmo" instead')
@@ -323,8 +534,46 @@ class DREAMS:
             print('')
         return ids[winner]
 
+    def get_target_central_subhalo_index(self, run, snap, target_mass, max_dm=0.25, max_contam=0.25, DMO=False):
+        '''
+        Target the central subhalo of a specific halo mass with specific contamination based on the Subfind catalogs
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        - target_mass: (log) mass of halo of interest
+        (Optional)
+        - max_dm: max tolerance in delta mass 
+        - max_contam: max tolerance in contamination
+        - DMO: toggle for Nbody versions (note that this is not guarenteed to give you the same halo as the hydro version)
+
+        Returns:
+        - integer of subhalo id corresponding to your target
+        '''
+        h = self.get_h(run, snap)
+        grp_cat = self.read_group_catalog(run, snap, keys=['GroupFirstSub'])
+        fof_idx = self.get_target_fof_index(run, snap, target_mass, max_dm=max_dm, max_contam=max_contam, DMO=DMO)
+
+        return grp_cat['GroupFirstSub'][fof_idx]
+
     def get_target_rockstar_index(self, run, snap, target_mass, max_dm=0.25, DMO=False,
                                   _rockstar_units=1e3):
+        '''
+        Target a specific mass halo with specific contamination based on the Rockstar catalogs
+        (note that this assumes you also have Subfind catalogs to verify the target)
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        - target_mass: (log) mass of halo of interest
+        (Optional)
+        - max_dm: max tolerance in delta mass
+        - DMO: toggle for Nbody versions (note that this is not guarenteed to give you the same halo as the hydro version)
+        - _rockstar_units: convert rockstar units (Mpc) to Subfind units (kpc)
+
+        Returns:
+        - integer of fof index corresponding to your target
+        '''
         rockstar_cat = self.read_rockstar(run, snap)
         
         ## get close matches in halo mass
@@ -355,8 +604,25 @@ class DREAMS:
         rockstar_id = ids[np.argmin(np.linalg.norm(fof_pos - rs_pos, axis=1))]
         
         return np.where(rockstar_cat["ID"] == rockstar_id)[0][0]
+
+    ####################
+    ##  Merger Trees  ##
+    ####################
     
     def get_sublink_mpb(self, run, snap, subhalo_idx=-1, DMO=False):
+        '''
+        Get the main progenitor branch from SubLink catalogs
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        - subhalo_idx: root node galaxy to target (note: *not* halo, subhalo)
+        (Optional)
+        - DMO: toggle for Nbody versions
+
+        Returns:
+        - dict with SubLink main progenitor branch
+        '''
         sublink_tree = self.read_sublink_cat(run, DMO=DMO)
         
         if subhalo_idx > -1:
@@ -386,6 +652,19 @@ class DREAMS:
         return cat
 
     def get_consistent_trees_mpb(self, run, snap, subhalo_idx=-1, DMO=False):
+        '''
+        Get the main progenitor branch from Consistent Trees catalogs
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        - subhalo_idx: root node galaxy to target (from Rockstar)
+        (Optional)
+        - DMO: toggle for Nbody versions
+
+        Returns:
+        - dict with Consistent Trees main progenitor branch
+        '''
         if subhalo_idx == -1:
             raise KeyError(f'Please pass subhalo_idx')
         
@@ -427,6 +706,19 @@ class DREAMS:
         return mpb
 
     def get_sublink_tree(self, run, snap, subhalo_idx=-1, DMO=False):
+        '''
+        Get the full merger history from SubLink catalogs
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        - subhalo_idx: root node galaxy to target (note: *not* halo, subhalo)
+        (Optional)
+        - DMO: toggle for Nbody versions
+
+        Returns:
+        - dict with full SubLink merger history
+        '''
         sublink_tree = self.read_sublink_cat(run, DMO=DMO)    
         snap_overlap = (sublink_tree['SnapNum'] == snap)
 
@@ -486,6 +778,19 @@ class DREAMS:
         return cat
 
     def get_consistent_tree(self, run, snap, subhalo_idx=-1, DMO=False):
+        '''
+        Get the full merger history from Consistent Trees catalogs
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        - subhalo_idx: root node galaxy to target (from Rockstar)
+        (Optional)
+        - DMO: toggle for Nbody versions
+
+        Returns:
+        - dict with full Consistent Trees merger history
+        '''
         if subhalo_idx == -1:
             raise KeyError(f'Please pass subhalo_idx')
         
@@ -536,34 +841,27 @@ class DREAMS:
             tree[key] = np.array(tree[key])
     
         return tree
-            
-    def get_target_central_subhalo_index(self, run, snap, target_mass, max_dm=0.25, max_contam=0.25):
-        h = self.get_h(run, snap)
-        grp_cat = self.read_group_catalog(run, snap, keys=['GroupFirstSub'])
-        fof_idx = self.get_target_fof_index(run, snap, target_mass, max_dm=max_dm, max_contam=max_contam)
 
-        return grp_cat['GroupFirstSub'][fof_idx]
+    #################################################
+    ##  Load in Particle Data for specific target  ##
+    #################################################
     
-    def get_contamination_baryon(self, run, snap, fof_idx=-1, subhalo_idx=-1):
-        if fof_idx > -1 and subhalo_idx > -1:
-            raise ValueError('Please specify only fof_idx or subhalo_idx, not both')
-            
-        part_types = [0, 4]
-        keys = ['PartType0/AllowRefinement',
-                'PartType4/Masses']
-
-        if fof_idx > -1:
-            prt_cat = self.load_single_halo(run, snap, fof_idx, part_types, keys)
-        elif subhalo_idx > -1:
-            prt_cat = self.load_single_subhalo(run, snap, sub_idx, part_types, keys)
-
-        refined = prt_cat['PartType0/AllowRefinement']
-        low_res_gas = refined == 0
-
-        gas_contam = sum(low_res_gas) / len(refined)
-        return gas_contam
-
     def load_single_halo(self, run, snap, fof_idx=-1, part_types=[], keys=[], DMO=False):
+        '''
+        Load particles for a single FoF halo from arepo outputs
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        - fof_idx: halo index to load
+        (Optional)
+        - part_types: particle types to load, all if left empty
+        - keys: keys to load, all if left empty
+        - DMO: toggle for Nbody versions
+
+        Returns:
+        - dictionary with particle information for all particles within halo
+        '''
         if fof_idx == -1:
             raise ValueError('Please specify halo to load')
 
@@ -629,6 +927,21 @@ class DREAMS:
         return merged
 
     def load_single_subhalo(self, run, snap, sub_idx=-1, part_types=[], keys=[], DMO=False):
+        '''
+        Load particles for a single subhalo from arepo outputs
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        - sub_idx: halo index to load
+        (Optional)
+        - part_types: particle types to load, all if left empty
+        - keys: keys to load, all if left empty
+        - DMO: toggle for Nbody versions
+
+        Returns:
+        - dictionary with particle information for all particles within subhalo
+        '''
         if sub_idx == -1:
             raise ValueError("Please specify subhalo to load")
     
@@ -642,8 +955,8 @@ class DREAMS:
         if DMO and any(pt in [0, 4, 5] for pt in part_types):
             raise KeyError("Cannot load baryons in DMO simulation")
     
-        path = self.resolve_dir("Sims", run, snap, DMO)# / f"{self.box_or_run}_{run}" / f"snap_{snap:03d}.hdf5"
-        self.check_path(path, 'Snapshot', run, snap)
+        path = self._resolve_dir("Sims", run, snap, DMO)
+        self._check_path(path, 'Snapshot', run, snap)
     
         grp_cat = self.read_group_catalog(run, snap, keys=['SubhaloLenType'], DMO=DMO)
         lens = grp_cat['SubhaloLenType'][sub_idx]
@@ -679,12 +992,30 @@ class DREAMS:
     
         return cat
 
-    def match_halo_hydro_dmo(self, run, snap, target_mass,
-                             mass_tolerance=0.5, contamination_tolerance=0.2,
-                             full_search=True):
+    #######################
+    ##  Match DMO/Hydro  ##
+    #######################
+        
+    def match_halo_hydro_dmo(self, run, snap, target_mass, _full_search=True,
+                             mass_tolerance=0.5, contamination_tolerance=0.2):
         '''
-        Full search = True compares against every single halo in the box regardless of mass or contamination
-        Full search = False assumes that your dmo target is within mass_tolerance and contamination_tolerance
+        Match a hydro target to its corresponding dark matter only counterpart
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        - target_mass: (log) mass of halo of interest
+        (Optional)
+        - _full_seach: see Note below
+        - mass_tolerance: tolerance of mass matches for _full_search
+        - contamination_tolerance: tolerance of contamination for _full_search
+
+        Note:
+        _full_search = True 
+            compares against every single halo in the box regardless of mass or contamination
+        _full_search = False 
+            (not recommended, but faster)
+            assumes that your dmo target is within mass_tolerance and contamination_tolerance
         '''
         fof_idx = self.get_target_fof_index(run, snap, target_mass)
 
@@ -702,7 +1033,7 @@ class DREAMS:
 
         dmo_masses = np.log10(np.sum(grp_cat_dmo['GroupMassType'], axis=1) * 1.00E+10 / h)
         ids = np.arange(len(dmo_masses))
-        if not full_search:
+        if not _full_search:
             targets_within_tolerance = np.abs(dmo_masses - target_mass) < mass_tolerance
 
             if self._verbose:

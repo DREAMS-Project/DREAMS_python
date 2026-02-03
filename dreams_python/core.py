@@ -407,9 +407,9 @@ class DREAMS:
             box_size=f['Header'].attrs['BoxSize']
         return box_size
     
-    def get_high_res_dm_mass(self, run, snap):
+    def get_high_res_dm_mass(self, run, snap, DMO=False):
         '''Get high res dm mass resolution at specified simulation snapshot'''
-        hdr = self.get_header(run, snap)
+        hdr = self.read_header(run, snap, DMO=False)
         return hdr['MassTable'][1]
 
     #####################

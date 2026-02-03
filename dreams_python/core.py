@@ -464,6 +464,9 @@ class DREAMS:
         refined = prt_cat['PartType0/AllowRefinement']
         low_res_gas = refined == 0
 
+        if len(refined) == 0: ## if no gas in target
+            return np.nan
+
         gas_contam = sum(low_res_gas) / len(refined)
         return gas_contam
 

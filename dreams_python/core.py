@@ -460,6 +460,8 @@ class DREAMS:
             prt_cat = self.load_single_halo(run, snap, fof_idx, part_types, keys)
         elif subhalo_idx > -1:
             prt_cat = self.load_single_subhalo(run, snap, sub_idx, part_types, keys)
+        elif fof_idx == -1 and subhalo_idx == -1:
+            raise Error('Please Specify a target')
 
         refined = prt_cat['PartType0/AllowRefinement']
         low_res_gas = refined == 0
@@ -629,26 +631,61 @@ class DREAMS:
         - dict with SubLink main progenitor branch
         '''
         sublink_tree = self.read_sublink_cat(run, DMO=DMO)
+        snap_overlap = (sublink_tree['SnapNum'] == snap)
+        idxs         = np.arange(len(snap_overlap))
+
+        id_to_index = {
+            sublink_tree['SubhaloID'][i]: i
+            for i in range(len(sublink_tree['SubhaloID']))
+        }
         
         if subhalo_idx > -1:
-            mask = ( (sublink_tree['SnapNum'] == snap) & (sublink_tree['SubhaloID'] == subhalo_idx) )
+            raw_subhalo_id = int(snap*1e+12+ subhalo_idx)
+            mask = ( (sublink_tree['SnapNum'] == snap) & (sublink_tree['SubhaloIDRaw'] == raw_subhalo_id) )
             match = np.where( mask )[0]
             if match.size == 0:
-                print(f'!!! Warning !!! Subhalo {subhalo_idx} tree not found')
-                return {}
+                if match.size == 0:
+                    print(f'!!! Warning !!! Subhalo {subhalo_idx} tree not found')
+                    return {}
             target = match[0]
         else:
             raise KeyError(f'Please pass subhalo_idx')
 
+        ## Extra validation steps
+        grp_cat = self.read_group_catalog(run, snap, keys=['SubhaloMass','GroupMassType','SubhaloGrNr'])
+        h = self.get_h(run, snap)
+        ## 1. Validate the mass and contmaintion is a reasonable match
+        try:
+            grp_cat_mass = np.log10(grp_cat['SubhaloMass'][subhalo_idx]*1.00e+10/h)
+            sublink_mass = np.log10(sublink_tree['SubhaloMass'][target]*1.00E+10/h)
+            assert(np.isclose( grp_cat_mass, sublink_mass, atol=0.25 ))
+        except AssertionError as e:
+            ## 2. If the mass isn't reasonable, switch to the central of this FoF Group
+            idxs = idxs[snap_overlap]
+            sublink_masses = np.log10(sublink_tree['SubhaloMass'][snap_overlap]*1.00E+10/h)
+            grp_cat_mass = np.log10(grp_cat['SubhaloMass'][subhalo_idx]*1.00e+10/h)
+            
+            target = idxs[np.argmin( np.abs(sublink_masses - grp_cat_mass) )]
+            grp_cat_mass = np.log10(grp_cat['SubhaloMass'][subhalo_idx]*1.00e+10/h)
+            sublink_mass = np.log10(sublink_tree['SubhaloMass'][target]*1.00E+10/h)
+            try:
+                assert(grp_cat_mass == sublink_mass)
+            except AssertionError as e:
+                ### 3. If we've gotten this far... file may be corrupted
+                print(f'!!! Target not properly found for {self.box_or_run} {run} !!!')
+                # raise(e)
+        
         cat = dict()
         for key in sublink_tree.keys(): ## add target info
             cat[key] = [sublink_tree[key][target]]
-
+        
         fpID = sublink_tree['FirstProgenitorID'][target] ## get target's first progenitor
         while fpID != -1: ## add progenitor info
+            fp_index = id_to_index[fpID]
+            
             for key in sublink_tree.keys():
-                cat[key] += [sublink_tree[key][fpID]]
-            fpID = sublink_tree['FirstProgenitorID'][fpID]
+                cat[key] += [sublink_tree[key][fp_index]]
+            fpID = sublink_tree['FirstProgenitorID'][fp_index]
 
         cat = {
             key: np.array(cat[key]) for key in cat
@@ -724,22 +761,53 @@ class DREAMS:
         Returns:
         - dict with full SubLink merger history
         '''
-        sublink_tree = self.read_sublink_cat(run, DMO=DMO)    
+        sublink_tree = self.read_sublink_cat(run, DMO=DMO)
         snap_overlap = (sublink_tree['SnapNum'] == snap)
+        idxs         = np.arange(len(snap_overlap))
+        
+        id_to_index = {
+            sublink_tree['SubhaloID'][i]: i
+            for i in range(len(sublink_tree['SubhaloID']))
+        }
 
         if sum(snap_overlap) == 0:
             raise ValueError(f'SubLink has no subhalos at snap {snap}')
         
         if subhalo_idx > -1:
-            mask = ( (sublink_tree['SnapNum'] == snap) & (sublink_tree['SubhaloID'] == subhalo_idx) )
+            raw_subhalo_id = snap*1e+12+ subhalo_idx
+            mask = ( (sublink_tree['SnapNum'] == snap) & (sublink_tree['SubhaloIDRaw'] == raw_subhalo_id) )
             match = np.where( mask )[0]
             if match.size == 0:
                 print(f'!!! Warning !!! Subhalo {subhalo_idx} tree not found')
                 return {}
             target = match[0]
         else:
-            raise KeyError(f'Please pass either fof_idx or subhalo_idx')
+            raise KeyError(f'Please pass subhalo_idx')
 
+        ## Extra validation steps
+        grp_cat = self.read_group_catalog(run, snap, keys=['SubhaloMass','GroupMassType','SubhaloGrNr'])
+        h = self.get_h(run, snap)
+        ## 1. Validate the mass and contmaintion is a reasonable match
+        try:
+            grp_cat_mass = np.log10(grp_cat['SubhaloMass'][subhalo_idx]*1.00e+10/h)
+            sublink_mass = np.log10(sublink_tree['SubhaloMass'][target]*1.00E+10/h)
+            assert(np.isclose( grp_cat_mass, sublink_mass, atol=0.25 ))
+        except AssertionError as e:
+            ## 2. If the mass isn't reasonable, switch to the central of this FoF Group
+            idxs = idxs[snap_overlap]
+            sublink_masses = np.log10(sublink_tree['SubhaloMass'][snap_overlap]*1.00E+10/h)
+            grp_cat_mass = np.log10(grp_cat['SubhaloMass'][subhalo_idx]*1.00e+10/h)
+            
+            target = idxs[np.argmin( np.abs(sublink_masses - grp_cat_mass) )]
+            grp_cat_mass = np.log10(grp_cat['SubhaloMass'][subhalo_idx]*1.00e+10/h)
+            sublink_mass = np.log10(sublink_tree['SubhaloMass'][target]*1.00E+10/h)
+            try:
+                assert(grp_cat_mass == sublink_mass)
+            except AssertionError as e:
+                ### 3. If we've gotten this far... file may be corrupted
+                print(f'!!! Target not properly found for {self.box_or_run} {run} !!!')
+                # raise(e)
+        
         cat = dict()
         for key in sublink_tree.keys(): ## add target info
             cat[key] = [sublink_tree[key][target]]
@@ -749,27 +817,31 @@ class DREAMS:
 
         ids_to_walk = [target]
         while npID != -1:
+            np_index = id_to_index[npID]
             for key in sublink_tree.keys():
-                cat[key] += [sublink_tree[key][fpID]]
+                cat[key] += [sublink_tree[key][np_index]]
             ids_to_walk.append(target)
-            npID = sublink_tree['NextProgenitorID'][target]
+            npID = sublink_tree['NextProgenitorID'][np_index]
 
         def walk_tree(ID, cat, sublink_tree):
             fpID = sublink_tree['FirstProgenitorID'][ID]
 
             while fpID != -1:
+                fp_index = id_to_index[fpID]
                 for key in sublink_tree.keys():
-                    cat[key] += [sublink_tree[key][fpID]]
+                    cat[key] += [sublink_tree[key][fp_index]]
 
-                npID = sublink_tree['NextProgenitorID'][fpID]
+                npID = sublink_tree['NextProgenitorID'][fp_index]
+
                 while npID != -1:
+                    np_index = id_to_index[npID]
                     for key in sublink_tree.keys():
-                        cat[key] += [sublink_tree[key][npID]]
-                    walk_tree(npID, cat, sublink_tree)
+                        cat[key] += [sublink_tree[key][np_index]]
+                    walk_tree(np_index, cat, sublink_tree)
 
-                    npID = sublink_tree['NextProgenitorID'][npID]
+                    npID = sublink_tree['NextProgenitorID'][np_index]
                 
-                fpID = sublink_tree['FirstProgenitorID'][fpID]
+                fpID = sublink_tree['FirstProgenitorID'][fp_index]
             
             return
 
@@ -851,7 +923,8 @@ class DREAMS:
     ##  Load in Particle Data for specific target  ##
     #################################################
     
-    def load_single_halo(self, run, snap, fof_idx=-1, part_types=[], keys=[], DMO=False):
+    def load_single_halo(self, run, snap, fof_idx=-1, part_types=[], keys=[], DMO=False,
+                         _nsubs_limiter=100):
         '''
         Load particles for a single FoF halo from arepo outputs
 
@@ -896,7 +969,10 @@ class DREAMS:
         nsubs     = grp_cat['GroupNsubs'][fof_idx]
     
         all_parts = []
-    
+
+        if nsubs > _nsubs_limiter:
+            raise Error(f'Refusing to load in more than {_nsubs_limiter} subhalos')
+        
         for sub in range(first_sub, first_sub + nsubs):
             sub_cat = self.load_single_subhalo(run, snap, sub_idx=sub, part_types=part_types, keys=keys, DMO=DMO)
             all_parts.append(sub_cat)

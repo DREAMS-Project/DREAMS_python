@@ -50,6 +50,7 @@ class DREAMS:
             "Rockstar":        "{base}/Rockstar/{dm}/{suite}/SB{sb}/{prefix}_{run}/out_{snap}.list",
             "Parameters":      "{base}/Parameters/{dm}/{suite}/{fname}",
             "ConsistentTrees": "{base}/Rockstar/{dm}/{suite}/SB{sb}/{prefix}_{run}/tree_0_0_0.dat",
+            "Offsets":         "{base}/FOF_Subfind/{dm}/{suite}/SB{sb}/{prefix}_{run}/offsets/offsets_{snap}.hdf5"
         }
 
         if self._verbose:
@@ -922,9 +923,106 @@ class DREAMS:
     #################################################
     ##  Load in Particle Data for specific target  ##
     #################################################
+
+    # def load_single_halo(self, run, snap, fof_idx=-1, part_types=[], keys=[], DMO=False,
+    #                             _nsubs_limiter=200):
+    #     """
+    #     Load particles for a single FoF halo, including subhalos and fluff.
+    
+    #     Fluff = particles in the FoF group not assigned to any subhalo.
+    
+    #     Inputs:
+    #     - run, snap: simulation and snapshot
+    #     - fof_idx: FoF halo index
+    #     - part_types: list of particle types to load (0,1,2,4,5). All if empty
+    #     - keys: dataset keys to load for each particle type
+    #     - DMO: if True, ignore baryons
+    
+    #     Returns:
+    #     - dict of merged particle properties (subhalos + fluff)
+    #     """
+    #     if fof_idx == -1:
+    #         raise ValueError("Please specify halo to load")
+    
+    #     if isinstance(part_types, int):
+    #         part_types = [part_types]
+    #     if len(part_types) == 0:
+    #         part_types = [0, 1, 2, 4, 5]
+    #         if DMO:
+    #             part_types = [1, 2]
+    
+    #     if DMO and any(pt in [0, 4, 5] for pt in part_types):
+    #         raise KeyError("Cannot load baryons in DMO simulation")
+    
+    #     # Load group catalog
+    #     grp_cat = self.read_group_catalog(run, snap,
+    #                                       keys=['GroupFirstSub', 'GroupNsubs', 'SubhaloLenType', 'GroupLenType'],
+    #                                       DMO=DMO)
+    #     first_sub = grp_cat['GroupFirstSub'][fof_idx]
+    #     nsubs = grp_cat['GroupNsubs'][fof_idx]
+    #     group_len = grp_cat['GroupLenType']
+    #     sub_len = grp_cat['SubhaloLenType']
+    
+    #     if nsubs > _nsubs_limiter:
+    #         raise Exception(f"Refusing to load > {_nsubs_limiter} subhalos (got {nsubs})")
+    
+    #     all_parts = []
+    
+    #     path = self._resolve_dir("Sims", run, snap, DMO)
+    #     with h5py.File(path, 'r') as f:
+    
+    #         for pt in part_types:
+    #             # --- 1. Load subhalos for this FoF ---
+    #             sub_ids_list = []
+    #             for sub in range(first_sub, first_sub + nsubs):
+    #                 sub_cat = self.load_single_subhalo(run, snap, sub_idx=sub, part_types=[pt], keys=keys, DMO=DMO)
+    #                 all_parts.append(sub_cat)
+    #                 # collect subhalo particle IDs
+    #                 if f'PartType{pt}/ParticleIDs' in sub_cat:
+    #                     sub_ids_list.append(sub_cat[f'PartType{pt}/ParticleIDs'])
+    #             if sub_ids_list:
+    #                 sub_ids = np.concatenate(sub_ids_list)
+    #             else:
+    #                 sub_ids = np.array([], dtype=int)
+    
+    #             # --- 2. Load all FoF particle IDs ---
+    #             group_start = np.sum(group_len[:fof_idx, pt])
+    #             group_end = group_start + group_len[fof_idx, pt]
+    #             group_ids = f[f'PartType{pt}/ParticleIDs'][group_start:group_end]
+
+    #             print(group_ids.shape)
+                
+    #             # --- 3. Compute fluff IDs (set difference) ---
+    #             fluff_ids = np.setdiff1d(group_ids, sub_ids)
+    #             if fluff_ids.size > 0:
+    #                 fluff_cat = {}
+    #                 # --- 4. Slice all other properties for fluff ---
+    #                 for key in keys:
+    #                     if key.startswith(f'PartType{pt}'):
+    #                         data = f[key][:]  # load full array for this type
+    #                         # pick only particles in fluff
+    #                         fluff_cat[key] = data[np.isin(f[f'PartType{pt}/ParticleIDs'][:], fluff_ids)]
+    #                 all_parts.append(fluff_cat)
+    
+    #     # --- Merge all parts dictionaries ---
+    #     merged = {}
+    #     if len(keys) == 0:
+    #         # collect all keys if none specified
+    #         keys_set = set()
+    #         for p in all_parts:
+    #             keys_set.update(p.keys())
+    #         keys = list(keys_set)
+    
+    #     for key in keys:
+    #         arrays = [p[key] for p in all_parts if key in p and p[key].size > 0]
+    #         if arrays:
+    #             merged[key] = np.concatenate(arrays, axis=0)
+    
+    #     return merged
+
     
     def load_single_halo(self, run, snap, fof_idx=-1, part_types=[], keys=[], DMO=False,
-                         _nsubs_limiter=100):
+                         _nsubs_limiter=200):
         '''
         Load particles for a single FoF halo from arepo outputs
 
@@ -963,16 +1061,20 @@ class DREAMS:
                         tmp_keys.append( f'PartType{pt}/{key}' )
             keys = tmp_keys
         
-        grp_cat = self.read_group_catalog(run, snap, keys=['GroupFirstSub', 'GroupNsubs'], DMO=DMO)
+        grp_cat = self.read_group_catalog(run, snap,
+                                          keys=['GroupFirstSub', 'GroupNsubs', 'SubhaloLenType','GroupLenType'],
+                                          DMO=DMO)
         
         first_sub = grp_cat['GroupFirstSub'][fof_idx]
         nsubs     = grp_cat['GroupNsubs'][fof_idx]
+        group_len = grp_cat['GroupLenType']
+        sub_len   = grp_cat['SubhaloLenType']
     
         all_parts = []
 
         if nsubs > _nsubs_limiter:
-            raise Error(f'Refusing to load in more than {_nsubs_limiter} subhalos')
-        
+            raise Exception(f'Refusing to load in more than {_nsubs_limiter} subhalos. You system has {nsubs}.')
+    
         for sub in range(first_sub, first_sub + nsubs):
             sub_cat = self.load_single_subhalo(run, snap, sub_idx=sub, part_types=part_types, keys=keys, DMO=DMO)
             all_parts.append(sub_cat)
@@ -983,7 +1085,44 @@ class DREAMS:
                 for key in gal.keys():
                     all_keys.add(key)
             keys = list(all_keys)
-        
+
+        ## Get anything *not* associated with a subhalo
+        path = self._resolve_dir("Sims", run, snap, DMO)
+        for pt in part_types:
+            total = group_len[fof_idx, pt]
+            sub_sum = np.sum(sub_len[first_sub:first_sub+nsubs, pt])
+            n_fluff = total - sub_sum
+            if n_fluff > 0:
+                with h5py.File(path, "r") as f:
+                    sub_ids = []
+                    
+                    group_start = np.sum(group_len[:fof_idx, pt])
+                    group_end   = group_start + group_len[fof_idx, pt]
+                    group_ids   = f[f'PartType{pt}/ParticleIDs'][group_start:group_end]
+    
+                    for sub_cat in all_parts:
+                        try: ## Not all subhalos will have all prt types
+                            sub_ids.extend( sub_cat[f'PartType{pt}/ParticleIDs'] ) 
+                        except KeyError:
+                            continue
+
+                    fluff_ids = np.setdiff1d(group_ids, sub_ids)
+
+                    assert(fluff_ids.size == n_fluff)
+
+                    within_mask = np.isin(f[f'PartType{pt}/ParticleIDs'][:], fluff_ids)
+                    
+                    fluff_cat = {}
+                    for key in keys:
+                        if key.startswith(f"PartType{pt}"):
+                            if key == 'PartType1/Masses':
+                                mass = f['Header'].attrs['MassTable'][pt]
+                                fluff_cat[key] = np.ones(sum(within_mask)) * mass
+                            else:
+                                fluff_cat[key] = f[key][ within_mask ]
+                    all_parts.append(fluff_cat)
+
+        ## combine all of the individual catalogs together
         merged = {}
         for key in keys:
             arrays = []
@@ -991,9 +1130,7 @@ class DREAMS:
                 if key not in p:
                     continue
                 arr = p[key]
-                # Ensure empty arrays have the correct number of dimensions
                 if arr.size == 0:
-                    # Determine correct ndim from first non-empty array
                     for ref in all_parts:
                         if key in ref and ref[key].size > 0:
                             ndim = ref[key].ndim
@@ -1006,7 +1143,7 @@ class DREAMS:
             merged[key] = np.concatenate(arrays, axis=0)
         
         return merged
-
+    
     def load_single_subhalo(self, run, snap, sub_idx=-1, part_types=[], keys=[], DMO=False):
         '''
         Load particles for a single subhalo from arepo outputs
@@ -1026,8 +1163,9 @@ class DREAMS:
         if sub_idx == -1:
             raise ValueError("Please specify subhalo to load")
     
-        if type(part_types) == type(0):
+        if isinstance(part_types, int):
             part_types = [part_types]
+    
         if len(part_types) == 0:
             part_types = [0, 1, 2, 4, 5]
             if DMO:
@@ -1039,39 +1177,71 @@ class DREAMS:
         path = self._resolve_dir("Sims", run, snap, DMO)
         self._check_path(path, 'Snapshot', run, snap)
     
-        grp_cat = self.read_group_catalog(run, snap, keys=['SubhaloLenType'], DMO=DMO)
-        lens = grp_cat['SubhaloLenType'][sub_idx]
+        ## Load required group catalog fields
+        grp = self.read_group_catalog(
+            run, snap,
+            keys=['GroupLenType', 'GroupFirstSub', 'GroupNsubs',
+                  'SubhaloLenType'],
+            DMO=DMO
+        )
     
-        grp_all = self.read_group_catalog(run, snap, keys=['SubhaloLenType'], DMO=DMO)
+        GroupLenType   = grp['GroupLenType']
+        GroupFirstSub  = grp['GroupFirstSub']
+        GroupNsubs     = grp['GroupNsubs']
+        SubhaloLenType = grp['SubhaloLenType']
+    
+        lens = SubhaloLenType[sub_idx]
+        ntypes = SubhaloLenType.shape[1]
+    
         offsets = np.zeros_like(lens)
-        for pt in part_types:
-            offsets[pt] = np.sum(grp_all['SubhaloLenType'][:sub_idx, pt])
+        fof_running_offset = np.zeros(ntypes, dtype=np.int64)
     
-        # Load data
+        for fof in range(len(GroupLenType)):    
+            first = GroupFirstSub[fof]
+            nsubs_fof = GroupNsubs[fof]
+            sub_running_offset = np.zeros(ntypes, dtype=np.int64)
+    
+            for i in range(nsubs_fof):
+                sub = first + i
+                if sub == sub_idx:
+                    offsets = fof_running_offset + sub_running_offset
+                    break
+                sub_running_offset += SubhaloLenType[sub]
+            else:
+                fof_running_offset += GroupLenType[fof]
+                continue
+            break
+    
         cat = {}
         with h5py.File(path, 'r') as f:
+    
             if len(keys) == 0:
                 keys = []
                 for pt in part_types:
                     if f'PartType{pt}' not in f:
                         continue
-                    keys += [f'PartType{pt}/{k}' for k in f[f'PartType{pt}'].keys()]
+                    keys += [f'PartType{pt}/{k}'
+                             for k in f[f'PartType{pt}'].keys()]
                     if pt == 1:
                         keys.append('PartType1/Masses')
-            
+    
             for key in keys:
                 pt = int(key.split("/")[0][-1])
                 start = offsets[pt]
                 length = lens[pt]
+    
                 if length == 0:
                     cat[key] = np.array([])
+    
                 elif key == 'PartType1/Masses':
                     mass = f['Header'].attrs['MassTable'][pt]
                     cat[key] = np.ones(length) * mass
+    
                 else:
                     cat[key] = f[key][start:start + length]
     
         return cat
+
 
     #######################
     ##  Match DMO/Hydro  ##

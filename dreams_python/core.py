@@ -1301,6 +1301,19 @@ class DREAMS:
             scfs.append( float(line.split()[0]) )
         
         return np.arange(self.get_nsnaps_high_frequency(run)), np.array(scfs)
+
+    def read_header_high_frequency(self, run, snap):
+        attrs = {}
+        path = self._resolve_dir("HighFrequency", run, snap, DMO=False)
+        self._check_path(path, 'High Frequency', run, snap)
+
+        with h5py.File(path, 'r') as f:
+            hdr = f['Header']
+            for key in hdr.attrs:
+                attrs[key] = hdr.attrs[key]
+        return attrs
+
+        
         
 if __name__ == "__main__":
     print('Hello World!')

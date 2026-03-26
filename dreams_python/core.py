@@ -1,11 +1,12 @@
 '''
 Read functions for most of the data products from the DREAMS simulation suites
 
-As of 02/02/2026, this has been tested and verifed to work (for the most part) on
-- MW_Zooms, WDM, SB4
-- MW_Zooms, CDM, SB5
-- varied_mass, CDM, SB6
-- varied_mass, CDM, SB9
+As of 03/26/2026, this has been tested and verifed to work (for the most part) on
+- Boxes, WDM, SB6
+- MW_Zooms, WDM, SB4 / SB4_Nbody
+- MW_Zooms, CDM, SB5 / SB5_Nbody
+- varied_mass, CDM, SB6 / SB6_Nbody
+- varied_mass, CDM, SB9 / SB9_Nbody
 
 Written by Alex M. Garcia (alexgarcia@virginia.edu) with thanks to Jonah Rose and
 Ilem Leisher for providing some functions that have been adapted here.
@@ -14,6 +15,7 @@ import h5py
 import sys, os
 import numpy as np
 from pathlib import Path
+from glob import glob
 
 class DREAMS:
     def __init__( self, base_path, suite='varied_mass', DM_type='CDM', sobol_number=6,
@@ -50,7 +52,8 @@ class DREAMS:
             "Rockstar":        "{base}/Rockstar/{dm}/{suite}/SB{sb}/{prefix}_{run}/out_{snap}.list",
             "Parameters":      "{base}/Parameters/{dm}/{suite}/{fname}",
             "ConsistentTrees": "{base}/Rockstar/{dm}/{suite}/SB{sb}/{prefix}_{run}/tree_0_0_0.dat",
-            "Offsets":         "{base}/FOF_Subfind/{dm}/{suite}/SB{sb}/{prefix}_{run}/offsets/offsets_{snap}.hdf5"
+            "Offsets":         "{base}/FOF_Subfind/{dm}/{suite}/SB{sb}/{prefix}_{run}/offsets/offsets_{snap}.hdf5",
+            "HighFrequency":   "{base}/Sims/{dm}/{suite}/SB{sb}/{prefix}_{run}/high_frequency/snap_mini_{snap}.hdf5"
         }
 
         if self._verbose:
@@ -83,7 +86,10 @@ class DREAMS:
         Set the layout for the simulation output directories
 
         Inputs:
-        - file_type: any of ["Sims", "FOF_Subfind", "SubLink", "Rockstar", "Parameters", "ConsistentTrees"] and "*_Nbody" versions
+        - file_type: any of 
+                 "Sims", "FOF_Subfind", "SubLink", "Rockstar", "Parameters", "ConsistentTrees",
+                 "Offsets", "HighFrequency"
+          and "*_Nbody" versions
         - template: fake f-string formatting for where data lives
             + acceptable key words:
                 ~ base: base path of simulations
@@ -114,6 +120,14 @@ class DREAMS:
             file_type = file_type + "_Nbody"
 
         template = self.layout[file_type]
+
+        if "HighFrequency" in file_type:
+            snap = f"{snap:04d}"
+        elif "Rockstar" not in file_type:
+            snap = f"{snap:03d}"
+        else:
+            snap = f"{snap}"
+        
         path = template.format(
             base=self.base_path,
             dm=self.dm_type,
@@ -121,8 +135,8 @@ class DREAMS:
             prefix=self.box_or_run,
             sb=f"{sb}",
             run=f"{run}",
-            snap=f"{snap:03d}" if "Rockstar" not in file_type else f"{snap}",
-            fname=run ## kinda hacky
+            snap=snap,
+            fname=run
         )
         return Path(path)
 
@@ -1234,6 +1248,59 @@ class DREAMS:
             print(f'Hydro-DMO Matching Best Score: {scores[np.argmax(scores)]*100:0.3f}% overlap')
         
         return fof_idx, ids[np.argmax(scores)]
+
+
+    ################################
+    ##  High Frequence Snapshots  ##
+    ################################
+
+    def get_nsnaps_high_frequency(self, run):
+        path_to_data = str(self._resolve_dir("HighFrequency", run, 0, DMO=False)).replace('snap_mini_0000.hdf5','')
+        all_snapshots = glob(path_to_data+"snap_mini*.hdf5")
+        return len(all_snapshots)
+        
+    def read_individual_high_frequency(self, run, snap):
+        path = self._resolve_dir("HighFrequency", run, snap, DMO=False)
+        self._check_path(path, 'High Frequency Snapshots', run, snap)
+
+        cat  = {}
+        keys = []
+        with h5py.File(path) as ofile:
+            part_types = [key.replace("PartType",'') for key in ofile.keys() if "PartType" in key]
+            for pt in part_types:
+                try:
+                    cat_keys = ofile[f'PartType{pt}'].keys()
+                except KeyError:
+                    continue
+                for cat_key in cat_keys:
+                    if len(ofile[f'PartType{pt}/{cat_key}']) == 0:
+                        continue
+                    keys.append(f'PartType{pt}/{cat_key}')
+
+                if pt == 1:
+                    keys.append('PartType1/Masses')
+            
+            for key in keys:
+                if key == 'PartType1/Masses':
+                    cat[key] = np.ones(ofile['PartType1/ParticleIDs'].shape)*ofile['Header'].attrs['MassTable'][1]
+                else:
+                    try:
+                        cat[key] = np.array(ofile[key])
+                    except KeyError as e:
+                        continue
+        return cat
+    
+    def get_scf_high_frequency(self, run, fname='high_cadence.txt'):
+        path_to_data = str(self._resolve_dir("HighFrequency", run, 0, DMO=False)).replace('snap_mini_0000.hdf5','')
+        snapshot_timings = f'{path_to_data}/{fname}'
+        with open(snapshot_timings, 'r') as f:
+            lines = f.readlines()
+
+        scfs = []
+        for line in lines:
+            scfs.append( float(line.split()[0]) )
+        
+        return np.arange(self.get_nsnaps_high_frequency(run)), np.array(scfs)
         
 if __name__ == "__main__":
     print('Hello World!')

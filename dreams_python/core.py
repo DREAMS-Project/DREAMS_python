@@ -77,6 +77,14 @@ class DREAMS:
             'Type','SM','Gas','BH_Mass'
         ]
 
+    def __repr__(self):
+        out_str = f'Base Path: {self.base_path}\n'
+        out_str += f'Box or Run: {self.box_or_run}\n'
+        out_str += f'DM Type: {self.dm_type}\n'
+        out_str += f'Suite: {self.suite}\n'
+        out_str += f'Sobol #: {self.sobol_number}\n'
+        return out_str
+
     #############
     ##  Paths  ##
     #############

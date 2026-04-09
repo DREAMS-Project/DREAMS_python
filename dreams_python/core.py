@@ -179,6 +179,9 @@ class DREAMS:
         path = self._resolve_dir("FOF_Subfind", run, snap, DMO)
         self._check_path(path, 'Group Catalog', run, snap)
         
+        if type(keys) == str:
+            keys = [keys]
+
         cat = dict()
         with h5py.File(path) as ofile:
             if len(keys) == 0:
@@ -219,7 +222,10 @@ class DREAMS:
 
         if DMO and any(pt in [0, 4, 5] for pt in part_types):
             raise KeyError("Cannot load baryons in DMO simulation")
-        
+       
+        if type(keys) == str:
+            keys = [keys]
+ 
         if len(keys) > 0:
             tmp_keys = []
             for key in keys:
@@ -276,6 +282,9 @@ class DREAMS:
         path = self._resolve_dir("Rockstar", run, snap, DMO)
         self._check_path(path, 'Rockstar Catalog', run, snap)
 
+        if type(keys) == str:
+            keys = [keys]
+
         output = dict()
         with open(path, 'r') as f:
             data   = np.genfromtxt(f, names=True)
@@ -322,6 +331,9 @@ class DREAMS:
         '''
         path = self._resolve_dir("SubLink", run, -1, DMO)
         self._check_path(path, 'Sublink Catalog', run)
+
+        if type(keys) == str:
+            keys = [keys]
         
         cat = dict()
         with h5py.File(path, 'r') as ofile:
@@ -347,6 +359,9 @@ class DREAMS:
         '''
         path = self._resolve_dir("ConsistentTrees", run, -1, DMO)
         self._check_path(path, 'Consistent Trees Catalog', run)
+
+        if type(keys) == str:
+            keys = [keys]
 
         lines = []
         with open(path, 'r') as f:

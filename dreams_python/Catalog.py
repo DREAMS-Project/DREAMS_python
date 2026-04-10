@@ -32,3 +32,5 @@ class Catalog:
         self.data[key] = value
         return
 
+    def keys(self):
+        return self.data.keys()

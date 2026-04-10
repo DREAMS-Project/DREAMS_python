@@ -487,7 +487,13 @@ class DREAMS:
             raise(AssertionError("Need to Load in GroupMassType into group catalog"))
 
         masses = group_catalog['GroupMassType']
-        return masses[:, 2] / np.sum(masses, axis=1)
+        cont = masses[:, 2] / np.sum(masses, axis=1)
+
+        #necessary for dwarf suite
+        ncut = masses[:,1] == 0
+        cont[ncut] = 1
+
+        return cont
 
     def get_contamination_baryon(self, run, snap, fof_idx=-1, subhalo_idx=-1):
         '''
@@ -530,7 +536,40 @@ class DREAMS:
     ##  Identify Target of Interest  ##
     ###################################
         
-    def get_target_fof_index(self, run, snap, target_mass, max_dm=0.25, max_contam=0.25, DMO=False):
+    def get_target_fof_index(self, run, snap, DMO=False, tol=2):
+
+        params, header = self.read_param_file(f'SB{self.sobol_number}.params')
+        
+        xidx = yidx = zidx = -1
+        for i,key in enumerate(header):
+            if key == 'x':
+                xidx = i
+            if key == 'y':
+                yidx = i
+            if key == 'z':
+                zidx = i
+
+        if xidx==-1 or yidx==-1 or zidx==-1:
+            raise KeyError('Target Halo Position Not In Parameter File')
+
+        target_pos = params[run,[xidx,yidx,zidx]]
+
+        if round(np.sum(target_pos),2) == -3:
+            return None
+        
+        grp_cat = self.read_group_catalog(run, snap, keys=['GroupPos'], DMO=DMO)
+        
+        target_pos_kpc = target_pos * grp_cat.boxsize
+        r2 = np.sum(np.square(grp_cat['GroupPos'] - target_pos_kpc),axis=1)
+        
+        target_cut = r2 < tol*tol
+
+        target_idx = np.arange(len(r2))[target_cut]
+
+        return target_idx[0]
+
+
+    def get_target_fof_index_legacy(self, run, snap, target_mass, max_dm=0.25, max_contam=0.25, DMO=False):
         '''
         Target a specific mass halo with specific contamination based on the Subfind catalogs
 
@@ -564,7 +603,7 @@ class DREAMS:
         dm_tolerance     = max_dm 
         contam_tolerance = max_contam
         tolerable_grps   = (dm < dm_tolerance) & (grp_contam < contam_tolerance)
-        
+
         if sum(tolerable_grps) == 0:
             print("0 groups found")
             return -1
@@ -581,7 +620,7 @@ class DREAMS:
 
         if self._verbose:
             this_mass_res   = np.log10(self.get_high_res_dm_mass(run,snap) * 1.00e+10/h)
-            this_gas_contam = self.get_contamination_baryon(run, snap, ids[winner])
+            #this_gas_contam = self.get_contamination_baryon(run, snap, ids[winner])
 
             dmo_tag = ' (DMO)' if DMO else ''
             
@@ -590,8 +629,8 @@ class DREAMS:
             print(f'\tHalo Mass              : {log_grp_mass[winner]:0.3f} [log Msun]')
             print(f'\tHR DM Mass Resolution  : {this_mass_res:0.3f} [log Msun]')
             print(f'\tDM Contamination       : {grp_contam[winner]*100:0.3f}%')
-            if not DMO:
-                print(f'\tGas Contamination      : {this_gas_contam*100:0.3f}%')
+            #if not DMO:
+            #    print(f'\tGas Contamination      : {this_gas_contam*100:0.3f}%')
             print('')
         return ids[winner]
 

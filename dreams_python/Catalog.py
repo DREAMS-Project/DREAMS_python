@@ -1,6 +1,6 @@
 
 
-class Catalog:
+class Catalog():
 
     def __init__(self):
 
@@ -31,6 +31,9 @@ class Catalog:
     def __setitem__(self, key, value):
         self.data[key] = value
         return
+
+    def __iter__(self):
+        return iter(self.data.keys())
 
     def keys(self):
         return self.data.keys()

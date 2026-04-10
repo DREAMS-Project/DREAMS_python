@@ -412,6 +412,21 @@ class DREAMS:
             for key in hdr.attrs:
                 attrs[key] = hdr.attrs[key]
         return attrs
+
+    def get_correct_keys(self, input_keys, part_types):
+        corrected_keys = []
+        for key in input_keys:
+            if len(key.split('/')) == 2: #if key is already correct
+                corrected_keys.append(key)
+                continue
+            if 'Group' in key:
+                corrected_keys.append(f'Group/{key}')
+            elif 'Subhalo' in key:
+                corrected_keys.append(f'Subhalo/{key}')
+            else:
+                for i in part_types:
+                    corrected_keys.append(f"PartType{i}/{key}")
+        return corrected_keys
     
     ########################
     ##  Header Shortcuts  ##
@@ -422,7 +437,7 @@ class DREAMS:
 
         cat.scf      = hdr['Time']
         cat.h        = hdr['HubbleParam']
-        cat.boxsize = hdr['BoxSize']
+        cat.boxsize  = hdr['BoxSize']
         cat.hr_dm    = hdr['MassTable'][1]
         cat.box      = run #gotem
         return cat
@@ -1191,6 +1206,8 @@ class DREAMS:
         offsets = np.zeros_like(lens)
         fof_running_offset = np.zeros(ntypes, dtype=np.int64)
     
+        keys = self.get_correct_keys(keys, part_types)
+
         for fof in range(len(GroupLenType)):    
             first = GroupFirstSub[fof]
             nsubs_fof = GroupNsubs[fof]
@@ -1207,7 +1224,9 @@ class DREAMS:
                 continue
             break
     
-        cat = {}
+        cat = Catalog()
+        self.populate_cat(cat, run, snap, DMO)
+
         with h5py.File(path, 'r') as f:
     
             if len(keys) == 0:
@@ -1221,11 +1240,18 @@ class DREAMS:
                         keys.append('PartType1/Masses')
     
             for key in keys:
+
+                if 'PartType' not in key:
+                    continue
+
                 pt = int(key.split("/")[0][-1])
                 start = offsets[pt]
                 length = lens[pt]
+
+                if key not in f:
+                    continue
     
-                if length == 0:
+                elif length == 0:
                     cat[key] = np.array([])
     
                 elif key == 'PartType1/Masses':

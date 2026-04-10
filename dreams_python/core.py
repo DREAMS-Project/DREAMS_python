@@ -16,6 +16,7 @@ import sys, os
 import numpy as np
 from pathlib import Path
 from glob import glob
+from .Catalog import Catalog
 
 class DREAMS:
     def __init__( self, base_path, suite='varied_mass', DM_type='CDM', sobol_number=6,
@@ -182,7 +183,10 @@ class DREAMS:
         if type(keys) == str:
             keys = [keys]
 
-        cat = dict()
+        #cat = dict()
+        cat = Catalog()
+        self.populate_cat(cat, run, snap, DMO)
+
         with h5py.File(path) as ofile:
             if len(keys) == 0:
                 cat_keys = ofile.keys()
@@ -411,6 +415,17 @@ class DREAMS:
     ########################
     ##  Header Shortcuts  ##
     ########################
+
+    def populate_cat(self, cat, run, snap, DMO):
+        hdr = self.read_header(run, snap, DMO)
+
+        cat.scf      = hdr['Time']
+        cat.h        = hdr['HubbleParam']
+        cat.boxsize = hdr['BoxSize']
+        cat.hr_dm    = hdr['MassTable'][1]
+        cat.box      = run #gotem
+        return cat
+
         
     def get_scf(self, run, snap):
         '''Get scale factor at specified simulation snapshot'''

@@ -183,7 +183,6 @@ class DREAMS:
         if type(keys) == str:
             keys = [keys]
 
-        #cat = dict()
         cat = Catalog()
         self.populate_cat(cat, run, snap, DMO)
 
@@ -243,7 +242,9 @@ class DREAMS:
         path = self._resolve_dir("Sims", run, snap, DMO)
         self._check_path(path, 'Snapshot', run, snap)
 
-        cat = dict()
+        cat = Catalog()
+        self.populate_cat(cat, run, snap, DMO)
+
         with h5py.File(path) as ofile:
             if len(keys) == 0:
                 for pt in part_types:

@@ -1247,17 +1247,17 @@ class DREAMS:
                 pt = int(key.split("/")[0][-1])
                 start = offsets[pt]
                 length = lens[pt]
-
-                if key not in f:
-                    continue
     
-                elif length == 0:
+                if length == 0:
                     cat[key] = np.array([])
     
-                elif key == 'PartType1/Masses':
+                elif key == 'PartType1/Masses' and key not in f:
                     mass = f['Header'].attrs['MassTable'][pt]
                     cat[key] = np.ones(length) * mass
     
+                elif key not in f:
+                    continue
+
                 else:
                     cat[key] = f[key][start:start + length]
     

@@ -260,14 +260,14 @@ class emulator():
         model.to(device)
         model.eval()
 
-        context_norm = (context - self.new_norm_dict['cond_mean']) / self.new_norm_dict['cond_std']
+        context_norm = (samples - self.new_norm_dict['cond_mean']) / self.new_norm_dict['cond_std']
         context_norm = torch.tensor(context_norm, dtype=torch.float32).to(device)
         
         with torch.no_grad():
             flow_context = model(context_norm)
-            samples = model.flow(flow_context).sample().cpu().numpy()
+            model_samples = model.flow(flow_context).sample().cpu().numpy()
 
-        data_emulated = samples * self.new_norm_dict['target_std'] + self.new_norm_dict['target_mean']
+        data_emulated = model_samples * self.new_norm_dict['target_std'] + self.new_norm_dict['target_mean']
         
         return data_emulated
 

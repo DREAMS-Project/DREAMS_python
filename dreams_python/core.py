@@ -79,6 +79,7 @@ class DREAMS:
         ]
 
     def __repr__(self):
+        '''Output helpful info when printing'''
         out_str = f'Base Path: {self.base_path}\n'
         out_str += f'Box or Run: {self.box_or_run}\n'
         out_str += f'DM Type: {self.dm_type}\n'
@@ -414,6 +415,7 @@ class DREAMS:
         return attrs
 
     def get_correct_keys(self, input_keys, part_types):
+        '''Allow passing of keys without Group/Subhalo/PartType'''
         corrected_keys = []
         for key in input_keys:
             if len(key.split('/')) == 2: #if key is already correct
@@ -433,6 +435,7 @@ class DREAMS:
     ########################
 
     def populate_cat(self, cat, run, snap, DMO):
+        '''Read Header and fill Catalog attributes'''
         hdr = self.read_header(run, snap, DMO)
 
         cat.scf      = hdr['Time']

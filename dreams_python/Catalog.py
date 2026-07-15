@@ -3,7 +3,10 @@
 class Catalog():
 
     def __init__(self):
-
+        '''
+        A more helpful container for the simulation data. 
+        The objects acts as a dictionary but also holds helpful information in attributes.
+        '''
         self.boxsize = None
         self.scf = None
         self.h = None
@@ -15,6 +18,7 @@ class Catalog():
         return
 
     def __repr__(self):
+        '''Helpful info to output when printing'''
         out = f'Box Number: {self.box}\n' \
               f'Keys: {[key for key in self.data.keys()]}\n' \
               f'Boxsize = {self.boxsize}\n' \
@@ -37,3 +41,6 @@ class Catalog():
 
     def keys(self):
         return self.data.keys()
+
+    def values(self):
+        return self.data.values()

@@ -551,7 +551,20 @@ class DREAMS:
     ##  Identify Target of Interest  ##
     ###################################
         
-    def get_target_fof_index(self, run, snap, DMO=False, tol=2):
+    def get_target_fof_index_pfile(self, run, snap, DMO=False, tol=2):
+        '''
+        Target a specific mass halo specified in the parameter file
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        (Optional)
+        - DMO: toggle for Nbody versions (note that this is not guarenteed to give you the same halo as the hydro version)
+        - tol: tolerance in location position in code units
+
+        Returns:
+        - integer of fof index corresponding to your target
+        '''
 
         params, header = self.read_param_file(f'SB{self.sobol_number}.params')
         
@@ -584,7 +597,7 @@ class DREAMS:
         return target_idx[0]
 
 
-    def get_target_fof_index_legacy(self, run, snap, target_mass, max_dm=0.25, max_contam=0.25, DMO=False):
+    def get_target_fof_index(self, run, snap, target_mass, max_dm=0.25, max_contam=0.25, DMO=False):
         '''
         Target a specific mass halo with specific contamination based on the Subfind catalogs
 

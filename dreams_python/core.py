@@ -16,6 +16,7 @@ import sys, os
 import numpy as np
 from pathlib import Path
 from glob import glob
+from .Catalog import Catalog
 
 class DREAMS:
     def __init__( self, base_path, suite='varied_mass', DM_type='CDM', sobol_number=6,
@@ -76,6 +77,15 @@ class DREAMS:
             'TU','M_pe_Behroozi','M_pe_Diemer',
             'Type','SM','Gas','BH_Mass'
         ]
+
+    def __repr__(self):
+        '''Output helpful info when printing'''
+        out_str = f'Base Path: {self.base_path}\n'
+        out_str += f'Box or Run: {self.box_or_run}\n'
+        out_str += f'DM Type: {self.dm_type}\n'
+        out_str += f'Suite: {self.suite}\n'
+        out_str += f'Sobol #: {self.sobol_number}\n'
+        return out_str
 
     #############
     ##  Paths  ##
@@ -171,7 +181,12 @@ class DREAMS:
         path = self._resolve_dir("FOF_Subfind", run, snap, DMO)
         self._check_path(path, 'Group Catalog', run, snap)
         
-        cat = dict()
+        if type(keys) == str:
+            keys = [keys]
+
+        cat = Catalog()
+        self.populate_cat(cat, run, snap, DMO)
+
         with h5py.File(path) as ofile:
             if len(keys) == 0:
                 cat_keys = ofile.keys()
@@ -211,7 +226,10 @@ class DREAMS:
 
         if DMO and any(pt in [0, 4, 5] for pt in part_types):
             raise KeyError("Cannot load baryons in DMO simulation")
-        
+       
+        if type(keys) == str:
+            keys = [keys]
+ 
         if len(keys) > 0:
             tmp_keys = []
             for key in keys:
@@ -225,7 +243,9 @@ class DREAMS:
         path = self._resolve_dir("Sims", run, snap, DMO)
         self._check_path(path, 'Snapshot', run, snap)
 
-        cat = dict()
+        cat = Catalog()
+        self.populate_cat(cat, run, snap, DMO)
+
         with h5py.File(path) as ofile:
             if len(keys) == 0:
                 for pt in part_types:
@@ -267,6 +287,9 @@ class DREAMS:
         '''
         path = self._resolve_dir("Rockstar", run, snap, DMO)
         self._check_path(path, 'Rockstar Catalog', run, snap)
+
+        if type(keys) == str:
+            keys = [keys]
 
         output = dict()
         with open(path, 'r') as f:
@@ -314,6 +337,9 @@ class DREAMS:
         '''
         path = self._resolve_dir("SubLink", run, -1, DMO)
         self._check_path(path, 'Sublink Catalog', run)
+
+        if type(keys) == str:
+            keys = [keys]
         
         cat = dict()
         with h5py.File(path, 'r') as ofile:
@@ -339,6 +365,9 @@ class DREAMS:
         '''
         path = self._resolve_dir("ConsistentTrees", run, -1, DMO)
         self._check_path(path, 'Consistent Trees Catalog', run)
+
+        if type(keys) == str:
+            keys = [keys]
 
         lines = []
         with open(path, 'r') as f:
@@ -384,10 +413,38 @@ class DREAMS:
             for key in hdr.attrs:
                 attrs[key] = hdr.attrs[key]
         return attrs
+
+    def get_correct_keys(self, input_keys, part_types):
+        '''Allow passing of keys without Group/Subhalo/PartType'''
+        corrected_keys = []
+        for key in input_keys:
+            if len(key.split('/')) == 2: #if key is already correct
+                corrected_keys.append(key)
+                continue
+            if 'Group' in key:
+                corrected_keys.append(f'Group/{key}')
+            elif 'Subhalo' in key:
+                corrected_keys.append(f'Subhalo/{key}')
+            else:
+                for i in part_types:
+                    corrected_keys.append(f"PartType{i}/{key}")
+        return corrected_keys
     
     ########################
     ##  Header Shortcuts  ##
     ########################
+
+    def populate_cat(self, cat, run, snap, DMO):
+        '''Read Header and fill Catalog attributes'''
+        hdr = self.read_header(run, snap, DMO)
+
+        cat.scf      = hdr['Time']
+        cat.h        = hdr['HubbleParam']
+        cat.boxsize  = hdr['BoxSize']
+        cat.hr_dm    = hdr['MassTable'][1]
+        cat.box      = run #gotem
+        return cat
+
         
     def get_scf(self, run, snap):
         '''Get scale factor at specified simulation snapshot'''
@@ -448,7 +505,13 @@ class DREAMS:
             raise(AssertionError("Need to Load in GroupMassType into group catalog"))
 
         masses = group_catalog['GroupMassType']
-        return masses[:, 2] / np.sum(masses, axis=1)
+        cont = masses[:, 2] / np.sum(masses, axis=1)
+
+        #necessary for dwarf suite
+        ncut = masses[:,1] == 0
+        cont[ncut] = 1
+
+        return cont
 
     def get_contamination_baryon(self, run, snap, fof_idx=-1, subhalo_idx=-1):
         '''
@@ -491,6 +554,52 @@ class DREAMS:
     ##  Identify Target of Interest  ##
     ###################################
         
+    def get_target_fof_index_pfile(self, run, snap, DMO=False, tol=2):
+        '''
+        Target a specific mass halo specified in the parameter file
+
+        Inputs:
+        - run: simulation number
+        - snap: simulation snapshot
+        (Optional)
+        - DMO: toggle for Nbody versions (note that this is not guarenteed to give you the same halo as the hydro version)
+        - tol: tolerance in location position in code units
+
+        Returns:
+        - integer of fof index corresponding to your target
+        '''
+
+        params, header = self.read_param_file(f'SB{self.sobol_number}.params')
+        
+        xidx = yidx = zidx = -1
+        for i,key in enumerate(header):
+            if key == 'x':
+                xidx = i
+            if key == 'y':
+                yidx = i
+            if key == 'z':
+                zidx = i
+
+        if xidx==-1 or yidx==-1 or zidx==-1:
+            raise KeyError('Target Halo Position Not In Parameter File')
+
+        target_pos = params[run,[xidx,yidx,zidx]]
+
+        if round(np.sum(target_pos),2) == -3:
+            return None
+        
+        grp_cat = self.read_group_catalog(run, snap, keys=['GroupPos'], DMO=DMO)
+        
+        target_pos_kpc = target_pos * grp_cat.boxsize
+        r2 = np.sum(np.square(grp_cat['GroupPos'] - target_pos_kpc),axis=1)
+        
+        target_cut = r2 < tol*tol
+
+        target_idx = np.arange(len(r2))[target_cut]
+
+        return target_idx[0]
+
+
     def get_target_fof_index(self, run, snap, target_mass, max_dm=0.25, max_contam=0.25, DMO=False):
         '''
         Target a specific mass halo with specific contamination based on the Subfind catalogs
@@ -525,7 +634,7 @@ class DREAMS:
         dm_tolerance     = max_dm 
         contam_tolerance = max_contam
         tolerable_grps   = (dm < dm_tolerance) & (grp_contam < contam_tolerance)
-        
+
         if sum(tolerable_grps) == 0:
             print("0 groups found")
             return -1
@@ -542,7 +651,7 @@ class DREAMS:
 
         if self._verbose:
             this_mass_res   = np.log10(self.get_high_res_dm_mass(run,snap) * 1.00e+10/h)
-            this_gas_contam = self.get_contamination_baryon(run, snap, ids[winner])
+            #this_gas_contam = self.get_contamination_baryon(run, snap, ids[winner])
 
             dmo_tag = ' (DMO)' if DMO else ''
             
@@ -551,8 +660,8 @@ class DREAMS:
             print(f'\tHalo Mass              : {log_grp_mass[winner]:0.3f} [log Msun]')
             print(f'\tHR DM Mass Resolution  : {this_mass_res:0.3f} [log Msun]')
             print(f'\tDM Contamination       : {grp_contam[winner]*100:0.3f}%')
-            if not DMO:
-                print(f'\tGas Contamination      : {this_gas_contam*100:0.3f}%')
+            #if not DMO:
+            #    print(f'\tGas Contamination      : {this_gas_contam*100:0.3f}%')
             print('')
         return ids[winner]
 
@@ -1113,6 +1222,8 @@ class DREAMS:
         offsets = np.zeros_like(lens)
         fof_running_offset = np.zeros(ntypes, dtype=np.int64)
     
+        keys = self.get_correct_keys(keys, part_types)
+
         for fof in range(len(GroupLenType)):    
             first = GroupFirstSub[fof]
             nsubs_fof = GroupNsubs[fof]
@@ -1129,7 +1240,9 @@ class DREAMS:
                 continue
             break
     
-        cat = {}
+        cat = Catalog()
+        self.populate_cat(cat, run, snap, DMO)
+
         with h5py.File(path, 'r') as f:
     
             if len(keys) == 0:
@@ -1143,6 +1256,10 @@ class DREAMS:
                         keys.append('PartType1/Masses')
     
             for key in keys:
+
+                if 'PartType' not in key:
+                    continue
+
                 pt = int(key.split("/")[0][-1])
                 start = offsets[pt]
                 length = lens[pt]
@@ -1150,10 +1267,13 @@ class DREAMS:
                 if length == 0:
                     cat[key] = np.array([])
     
-                elif key == 'PartType1/Masses':
+                elif key == 'PartType1/Masses' and key not in f:
                     mass = f['Header'].attrs['MassTable'][pt]
                     cat[key] = np.ones(length) * mass
     
+                elif key not in f:
+                    continue
+
                 else:
                     cat[key] = f[key][start:start + length]
     
